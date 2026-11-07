@@ -90,7 +90,7 @@ Panel {
 
   function newRemoteWorkspace(name) {
     if (!remoteWsProc.running) {
-      remoteWsProc.command = ["herdr", "--machine", name, "workspace", "create", "--focus"]
+      remoteWsProc.command = ["/usr/bin/herdr", "--machine", name, "workspace", "create", "--focus"]
       remoteWsProc.running = true
     }
   }
@@ -98,6 +98,7 @@ Panel {
   property bool addingRemote: false
   property string addError: ""
   property string lastAddedLabel: ""
+  property string newRemoteTarget: ""
 
   function labelForTarget(target) {
     var host = String(target).split("@").pop()
@@ -107,11 +108,12 @@ Panel {
   // `herdr machine add` works without a tty when SSH key auth is set up; if it
   // needs interactive auth it exits non-zero and we offer the terminal fallback.
   function addRemote() {
-    var target = String(remoteField.text || "").trim()
+    var target = String(root.newRemoteTarget || "").trim()
     if (!target || addProc.running) return
     root.lastAddedLabel = root.labelForTarget(target)
     root.addError = ""
-    addProc.command = ["herdr", "machine", "add", target, "--label", root.lastAddedLabel]
+    root.newRemoteTarget = ""
+    addProc.command = ["/usr/bin/herdr", "machine", "add", target, "--label", root.lastAddedLabel]
     addProc.running = true
   }
 
@@ -162,7 +164,7 @@ Panel {
 
   Process {
     id: workspaceProc
-    command: ["herdr", "workspace", "create", "--focus"]
+    command: ["/usr/bin/herdr", "workspace", "create", "--focus"]
     onExited: root.refresh()
   }
 
@@ -425,7 +427,8 @@ Panel {
               spacing: Style.space(8)
 
               TextField {
-                id: remoteField
+                text: root.newRemoteTarget
+                onTextEdited: root.newRemoteTarget = text
                 width: parent.width - addRemoteBtn.implicitWidth - Style.space(8)
                 placeholderText: strings.t("panel.targetPlaceholder")
                 foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
