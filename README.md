@@ -49,9 +49,13 @@ To add a remote from the panel, use the **Add remote** button: enter the SSH
 target (`user@host`) and press Add. The panel runs `herdr machine add
 <target> --label <host>` non-interactively (works when SSH key auth is set
 up) and adds the label to the `remotes` setting automatically. If the add
-needs interactive auth, the panel shows the error and an **Open in terminal**
-button that runs `herdr machine add` interactively; afterwards add the label
-with `omarchy bar set jesper.herdr remotes "<label>"`.
+needs interactive auth — or herdr needs to approve installing/updating the
+remote herdr binary, which it only does from an interactive terminal — the
+panel detects that, adds the label to `remotes` right away, and opens a
+terminal running `herdr machine add` so you can enter the password / approve
+the install. The remote's section appears immediately and turns green on the
+next poll once the machine is saved. Other failures (DNS, host key) show the
+error with an **Open in terminal** fallback.
 
 ## How it works
 

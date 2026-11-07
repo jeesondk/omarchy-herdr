@@ -122,8 +122,13 @@ Panel {
   // Same signal herdr uses (ssh_error_requires_authentication): "permission
   // denied" with a password-ish method list, or agent signing failure. Host
   // key problems are not auth and stay on the plain failure path.
-  function needsAuth(text) {
+  // True when the failure can only be resolved in an interactive terminal:
+  // SSH password/agent auth (same signal herdr uses), or herdr refusing to
+  // approve a remote install/update without one ("run from an interactive
+  // terminal to approve ...").
+  function needsInteractive(text) {
     var m = String(text || "").toLowerCase()
+    if (m.indexOf("interactive terminal") >= 0) return true
     if (m.indexOf("host key verification failed") >= 0
         || m.indexOf("remote host identification has changed") >= 0) return false
     if (m.indexOf("permission denied") >= 0
@@ -149,10 +154,10 @@ Panel {
       root.refresh()
       return
     }
-    if (root.needsAuth(addProc.output)) {
+    if (root.needsInteractive(addProc.output)) {
       // Password or agent auth: finish the add in an opened terminal, and
       // watch the label from the next poll — its section turns green once saved.
-      root.addError = strings.t("panel.authNeeded")
+      root.addError = strings.t("panel.needsTerminal")
       root.addLabelToRemotes(root.lastAddedLabel)
       if (root.bar && typeof root.bar.run === "function")
         root.bar.run("omarchy launch terminal herdr machine add "
