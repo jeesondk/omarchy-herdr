@@ -52,6 +52,9 @@ def run_json(prefix, *args, timeout=HERDR_TIMEOUT_SECONDS):
     return None
   if isinstance(envelope, dict) and "result" in envelope:
     return envelope["result"]
+  # Some commands (e.g. `machine list --json`) print a bare array/object.
+  if isinstance(envelope, (dict, list)):
+    return envelope
   return None
 
 
@@ -184,12 +187,20 @@ def collect_host(prefix, timeout):
 
 
 def machine_catalog():
-  """label -> {target, session} from `herdr machine list --json`."""
-  result = run_json([], "machine", "list", "--json") or {}
+  """label -> {id, target, session} from `herdr machine list --json` (a top-level
+  array). The id is what `--machine` needs when a label is ambiguous."""
+  result = run_json([], "machine", "list", "--json")
+  if isinstance(result, dict) and "result" in result:
+    result = result["result"]
+  if isinstance(result, dict):
+    result = result.get("machines") or []
+  if not isinstance(result, list):
+    return {}
   catalog = {}
-  for machine in result.get("machines") or result.get("result", {}).get("machines") or []:
-    if isinstance(machine, dict) and machine.get("label"):
+  for machine in result:
+    if isinstance(machine, dict) and machine.get("label") and str(machine["label"]) not in catalog:
       catalog[str(machine["label"])] = {
+        "id": str(machine.get("id") or ""),
         "target": str(machine.get("target") or ""),
         "session": machine.get("session"),
       }
@@ -212,7 +223,10 @@ def main():
     catalog = machine_catalog()
     for label in labels:
       info = catalog.get(label, {})
-      host = collect_host(["--machine", label], REMOTE_TIMEOUT_SECONDS)
+      # Prefer the profile id: a duplicated label makes `--machine <label>`
+      # fail with "ambiguous".
+      selector = info.get("id") or label
+      host = collect_host(["--machine", selector], REMOTE_TIMEOUT_SECONDS)
       entry = {
         "name": label,
         "target": info.get("target", ""),
