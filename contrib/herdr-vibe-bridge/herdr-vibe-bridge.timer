@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the herdr vibe bridge every 5 seconds
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

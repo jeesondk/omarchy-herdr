@@ -1,0 +1,170 @@
+#!/usr/bin/python3
+"""Bridge: register vibe panes with herdr as agent "vibe" via pane.report_agent.
+
+Herdr 0.9.5's recognized-agent enum is closed and has no vibe, so vibe-rs
+panes stay at agent_status "unknown". The server's pane.report_agent API
+accepts any non-empty agent label and sets hook authority for a custom
+source, which makes `herdr agent list` / the TUI show the pane as a vibe
+agent. This script finds panes running vibe-rs (via pane process-info) and
+reports them; panes that stop running vibe are cleared again.
+
+Run periodically (systemd user timer, every 5s): each run re-reports with a
+fresh seq (epoch ms) so the hook authority stays fresh, and refreshes
+display_agent + token metadata (with a TTL) via pane.report_metadata.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import socket
+import sys
+import time
+from pathlib import Path
+
+SOCKET = Path.home() / ".config/herdr/herdr.sock"
+SOURCE = "omarchy-vibe-bridge"
+METADATA_TTL_MS = 60_000
+
+PROCESS_AGENT_LABELS = {
+  "vibe": "vibe",
+  "vibe-rs": "vibe",
+  "mistral-vibe": "vibe",
+}
+
+CTX_RE = re.compile(r"ctx\s*[^\d\s]*\s*([0-9][0-9.,]*)\s*([kmb])?\s*/", re.IGNORECASE)
+WORKING_HINTS = ("esc to interrupt", "ctrl+c to interrupt")
+
+STATE_FILE = Path.home() / ".local/state/herdr-vibe-bridge.json"
+
+
+def call(method, params, timeout=5):
+  try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    s.connect(str(SOCKET))
+    s.sendall((json.dumps({"id": "bridge", "method": method, "params": params}) + "\n").encode())
+    resp = json.loads(s.makefile().readline())
+    s.close()
+    return resp
+  except (OSError, ValueError):
+    return None
+
+
+def herdr_json(*args):
+  import subprocess
+  try:
+    p = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=5)
+  except (OSError, subprocess.TimeoutExpired):
+    return None
+  if p.returncode != 0:
+    return None
+  try:
+    env = json.loads(p.stdout)
+  except ValueError:
+    return None
+  return env.get("result") if isinstance(env, dict) else None
+
+
+def label_from_process(name):
+  base = str(name or "").strip().lower().rsplit("/", 1)[-1]
+  base = re.sub(r"\.(exe|bin)$", "", base)
+  return PROCESS_AGENT_LABELS.get(base)
+
+
+def pane_agent_label(pane_id):
+  result = herdr_json("pane", "process-info", "--pane", pane_id) or {}
+  for proc in (result.get("process_info") or {}).get("foreground_processes") or []:
+    label = label_from_process(proc.get("name")) or label_from_process((proc.get("argv") or [""])[0])
+    if label:
+      return label
+  return None
+
+
+def pane_state(pane_id):
+  """working when the visible screen shows interrupt chrome, else idle."""
+  import subprocess
+  try:
+    p = subprocess.run(["herdr", "pane", "read", pane_id, "--source", "visible", "--lines", "8"],
+                       capture_output=True, text=True, timeout=5)
+    text = p.stdout if p.returncode == 0 else ""
+  except (OSError, subprocess.TimeoutExpired):
+    text = ""
+  low = text.lower()
+  return "working" if any(h in low for h in WORKING_HINTS) else "idle"
+
+
+def pane_ctx_tokens(pane_id):
+  import subprocess
+  try:
+    p = subprocess.run(["herdr", "pane", "read", pane_id, "--source", "visible", "--lines", "8"],
+                       capture_output=True, text=True, timeout=5)
+    text = p.stdout if p.returncode == 0 else ""
+  except (OSError, subprocess.TimeoutExpired):
+    text = ""
+  match = None
+  for match in CTX_RE.finditer(text):
+    pass
+  if not match:
+    return {}
+  return {"input": f"{match.group(1)}{match.group(2) or ''}"}
+
+
+def main():
+  snap = herdr_json("api", "snapshot")
+  snapshot = (snap or {}).get("snapshot")
+  if not isinstance(snapshot, dict):
+    return
+  panes = snapshot.get("panes") or []
+
+  reported = set()
+  try:
+    prev = json.loads(STATE_FILE.read_text())
+    if isinstance(prev, dict) and isinstance(prev.get("panes"), list):
+      reported = set(prev["panes"])
+  except (OSError, ValueError):
+    pass
+
+  seq = int(time.time() * 1000)
+  now_vibe = set()
+  bridged = set(PROCESS_AGENT_LABELS.values())
+  for pane in panes:
+    pane_id = pane.get("pane_id")
+    if not pane_id:
+      continue
+    # Re-report panes we already bridged too: the metadata TTL expires, so
+    # skipping them would drop display_agent/tokens after 60s.
+    already_ours = pane.get("agent") in bridged
+    if not already_ours:
+      if pane.get("agent_status") != "unknown" or pane.get("agent") or pane.get("display_agent"):
+        continue
+    label = pane_agent_label(pane_id) or (pane.get("agent") if already_ours else None)
+    if not label or label not in bridged:
+      continue
+    now_vibe.add(pane_id)
+    state = pane_state(pane_id)
+    call("pane.report_agent", {
+      "pane_id": pane_id, "source": SOURCE, "agent": label,
+      "state": state, "seq": seq,
+    })
+    tokens = pane_ctx_tokens(pane_id)
+    call("pane.report_metadata", {
+      "pane_id": pane_id, "source": SOURCE, "agent": label,
+      "display_agent": label, "tokens": tokens,
+      "seq": seq, "ttl_ms": METADATA_TTL_MS,
+    })
+    seq += 1
+
+  # Clear panes that are no longer vibe (closed or process changed).
+  for pane_id in reported - now_vibe:
+    call("pane.clear_agent_authority", {"pane_id": pane_id, "source": SOURCE})
+
+  try:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps({"panes": sorted(now_vibe)}))
+  except OSError:
+    pass
+
+
+if __name__ == "__main__":
+  main()

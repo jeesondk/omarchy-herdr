@@ -1,0 +1,6 @@
+[Unit]
+Description=Register vibe panes with herdr as agent "vibe" (local bridge)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/herdr-vibe-bridge
