@@ -159,6 +159,7 @@ Panel {
 
   // One host's workspace tree, reused for the local session and each remote.
   component WorkspaceSection:           Column {
+            property var workspacesModel: []
             width: parent.width
             spacing: Style.space(10)
             visible: workspacesModel.length > 0
