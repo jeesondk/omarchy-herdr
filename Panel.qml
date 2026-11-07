@@ -98,6 +98,7 @@ Panel {
   property bool addingRemote: false
   property string addError: ""
   property string lastAddedLabel: ""
+  property string lastAddedTarget: ""
   property string newRemoteTarget: ""
 
   function labelForTarget(target) {
@@ -110,6 +111,7 @@ Panel {
   function addRemote() {
     var target = String(root.newRemoteTarget || "").trim()
     if (!target || addProc.running) return
+    root.lastAddedTarget = target
     root.lastAddedLabel = root.labelForTarget(target)
     root.addError = ""
     root.newRemoteTarget = ""
@@ -117,18 +119,47 @@ Panel {
     addProc.running = true
   }
 
-  function onRemoteAdded(exitCode) {
-    if (exitCode !== 0) {
-      root.addError = strings.t("panel.addFailed")
-      return
-    }
-    root.addingRemote = false
+  // Same signal herdr uses (ssh_error_requires_authentication): "permission
+  // denied" with a password-ish method list, or agent signing failure. Host
+  // key problems are not auth and stay on the plain failure path.
+  function needsAuth(text) {
+    var m = String(text || "").toLowerCase()
+    if (m.indexOf("host key verification failed") >= 0
+        || m.indexOf("remote host identification has changed") >= 0) return false
+    if (m.indexOf("permission denied") >= 0
+        && (m.indexOf("(publickey") >= 0 || m.indexOf("(keyboard-interactive") >= 0
+            || m.indexOf("(password") >= 0)) return true
+    if (m.indexOf("signing failed") >= 0
+        && (m.indexOf("sign_and_send_pubkey") >= 0 || m.indexOf("agent") >= 0)) return true
+    return false
+  }
+
+  function addLabelToRemotes(label) {
     var labels = root.remoteLabels.slice()
-    if (labels.indexOf(root.lastAddedLabel) < 0) labels.push(root.lastAddedLabel)
+    if (labels.indexOf(label) < 0) labels.push(label)
     setRemotesProc.command = ["/usr/share/omarchy/bin/omarchy", "bar", "set",
       "jesper.herdr", "remotes", labels.join(",")]
     setRemotesProc.running = true
-    root.refresh()
+  }
+
+  function onRemoteAdded(exitCode) {
+    if (exitCode === 0) {
+      root.addingRemote = false
+      root.addLabelToRemotes(root.lastAddedLabel)
+      root.refresh()
+      return
+    }
+    if (root.needsAuth(addProc.output)) {
+      // Password or agent auth: finish the add in an opened terminal, and
+      // watch the label from the next poll — its section turns green once saved.
+      root.addError = strings.t("panel.authNeeded")
+      root.addLabelToRemotes(root.lastAddedLabel)
+      if (root.bar && typeof root.bar.run === "function")
+        root.bar.run("omarchy launch terminal herdr machine add "
+          + Util.shellQuote(root.lastAddedTarget) + " --label " + Util.shellQuote(root.lastAddedLabel))
+      return
+    }
+    root.addError = strings.t("panel.addFailed")
   }
 
   Component.onCompleted: refresh()

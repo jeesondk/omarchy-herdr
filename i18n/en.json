@@ -18,5 +18,6 @@
   "panel.add": "Add",
   "panel.targetPlaceholder": "user@host",
   "panel.addFailed": "Add failed (needs interactive SSH auth?) \u2014 use \"Open in terminal\".",
-  "panel.openInTerminal": "Open in terminal"
+  "panel.openInTerminal": "Open in terminal",
+  "panel.authNeeded": "Password required \u2014 finishing the add in the opened terminal; the remote appears here once saved."
 }
