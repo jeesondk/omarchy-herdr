@@ -1,0 +1,175 @@
+#!/usr/bin/python3
+"""Print the live Herdr session state as one JSON line, for the jesper.herdr bar widget.
+
+Combines `herdr api snapshot` and `herdr agent list`. Herdr's recognized-agent
+list is closed in the server, so a pane running an agent it doesn't know (e.g.
+vibe-rs) stays at agent_status "unknown"; for those panes the foreground
+process (`herdr pane process-info`) identifies the agent and its own status
+line (`herdr pane read`, e.g. "ctx 46.4k/800k") gives context usage.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+
+HERDR_TIMEOUT_SECONDS = 4
+
+PROCESS_AGENT_LABELS = {
+  "vibe": "vibe",
+  "vibe-rs": "vibe",
+  "mistral-vibe": "vibe",
+}
+
+# "ctx ▏ 46.4k/800k" on the agent's status line.
+CTX_RE = re.compile(r"ctx\s*[^\d\s]*\s*([0-9][0-9.,]*)\s*([kmb])?\s*/\s*([0-9][0-9.,]*)\s*([kmb])?", re.IGNORECASE)
+AMOUNT_RE = re.compile(r"^\s*([0-9][0-9.,]*)\s*([kmb])?\s*$", re.IGNORECASE)
+
+
+def run_json(*args):
+  try:
+    proc = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=HERDR_TIMEOUT_SECONDS)
+  except (OSError, subprocess.TimeoutExpired):
+    return None
+  if proc.returncode != 0:
+    return None
+  try:
+    envelope = json.loads(proc.stdout)
+  except ValueError:
+    return None
+  if isinstance(envelope, dict) and "result" in envelope:
+    return envelope["result"]
+  return None
+
+
+def run_text(*args) -> str:
+  try:
+    proc = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=HERDR_TIMEOUT_SECONDS)
+  except (OSError, subprocess.TimeoutExpired):
+    return ""
+  return proc.stdout if proc.returncode == 0 else ""
+
+
+def parse_amount(text):
+  match = AMOUNT_RE.match(str(text or ""))
+  if not match:
+    return None
+  value = float(match.group(1).replace(",", ""))
+  multiplier = {"k": 1e3, "m": 1e6, "b": 1e9}.get((match.group(2) or "").lower(), 1)
+  return int(value * multiplier)
+
+
+def label_from_process_name(name):
+  base = str(name or "").strip().lower().rsplit("/", 1)[-1]
+  base = re.sub(r"\.(exe|bin)$", "", base)
+  return PROCESS_AGENT_LABELS.get(base)
+
+
+def pane_process_label(pane_id):
+  result = run_json("pane", "process-info", "--pane", pane_id) or {}
+  for proc in (result.get("process_info") or {}).get("foreground_processes") or []:
+    if not isinstance(proc, dict):
+      continue
+    argv0 = (proc.get("argv") or [""])[0]
+    label = label_from_process_name(proc.get("name")) or label_from_process_name(argv0)
+    if label:
+      return label
+  return None
+
+
+def pane_context_used(pane_id):
+  text = run_text("pane", "read", pane_id, "--source", "visible", "--lines", "8")
+  match = None
+  for match in CTX_RE.finditer(text):
+    pass
+  if not match:
+    return None
+  return parse_amount(f"{match.group(1)}{match.group(2) or ''}")
+
+
+def main():
+  snapshot_result = run_json("api", "snapshot")
+  snapshot = (snapshot_result or {}).get("snapshot")
+  if not isinstance(snapshot, dict):
+    print(json.dumps({"serverUp": False, "version": "", "focused": {}, "workspaces": []}))
+    return
+
+  agents_result = run_json("agent", "list") or {}
+  agents_by_pane = {
+    agent.get("pane_id"): agent
+    for agent in agents_result.get("agents") or []
+    if isinstance(agent, dict)
+  }
+
+  panes = []
+  for pane in snapshot.get("panes", []):
+    if not isinstance(pane, dict):
+      continue
+    pane_id = pane.get("pane_id")
+    listed = agents_by_pane.get(pane_id) or {}
+    agent = listed.get("agent") or pane.get("agent")
+    display_agent = listed.get("display_agent") or pane.get("display_agent")
+    tokens = listed.get("tokens") or pane.get("tokens")
+    status = pane.get("agent_status") or "unknown"
+    proc_agent = None
+    ctx_used = None
+    if status == "unknown" and not agent and not display_agent and pane_id:
+      proc_agent = pane_process_label(pane_id)
+      if proc_agent:
+        ctx_used = pane_context_used(pane_id)
+    panes.append({
+      "id": pane_id,
+      "tab_id": pane.get("tab_id"),
+      "workspace_id": pane.get("workspace_id"),
+      "title": pane.get("terminal_title_stripped") or pane.get("title") or "",
+      "cwd": pane.get("cwd") or "",
+      "status": status,
+      "focused": bool(pane.get("focused")),
+      "agent": agent,
+      "display_agent": display_agent,
+      "proc_agent": proc_agent,
+      "tokens": tokens if isinstance(tokens, dict) else {},
+      "ctx_used": ctx_used,
+    })
+
+  tabs_by_workspace = {}
+  for tab in snapshot.get("tabs", []):
+    if not isinstance(tab, dict):
+      continue
+    tabs_by_workspace.setdefault(tab.get("workspace_id"), []).append({
+      "id": tab.get("tab_id"),
+      "label": tab.get("label") or str(tab.get("number") or ""),
+      "number": tab.get("number"),
+      "status": tab.get("agent_status") or "unknown",
+      "focused": bool(tab.get("focused")),
+      "panes": [p for p in panes if p["tab_id"] == tab.get("tab_id")],
+    })
+
+  workspaces = []
+  for workspace in snapshot.get("workspaces", []):
+    if not isinstance(workspace, dict):
+      continue
+    workspaces.append({
+      "id": workspace.get("workspace_id"),
+      "label": workspace.get("label") or workspace.get("workspace_id") or "",
+      "status": workspace.get("agent_status") or "unknown",
+      "focused": bool(workspace.get("focused")),
+      "tokens": workspace.get("tokens") if isinstance(workspace.get("tokens"), dict) else {},
+      "tabs": tabs_by_workspace.get(workspace.get("workspace_id"), []),
+    })
+
+  print(json.dumps({
+    "serverUp": True,
+    "version": snapshot.get("version") or "",
+    "focused": {
+      "workspace_id": snapshot.get("focused_workspace_id"),
+      "tab_id": snapshot.get("focused_tab_id"),
+      "pane_id": snapshot.get("focused_pane_id"),
+    },
+    "workspaces": workspaces,
+  }))
+
+
+if __name__ == "__main__":
+  main()

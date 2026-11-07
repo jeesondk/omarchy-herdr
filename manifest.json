@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "jesper.herdr",
+  "name": "Herdr",
+  "version": "1.0.0",
+  "author": "jesper",
+  "license": "MIT",
+  "description": "Live Herdr session state in the bar: workspaces, tabs, panes, and the agent running in each pane.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Herdr",
+    "description": "Live Herdr workspaces, tabs, panes and their agents",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "refreshIntervalSec": 3
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 2,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 3
+      }
+    ]
+  }
+}

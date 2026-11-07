@@ -1,0 +1,15 @@
+{
+  "panel.title": "Herdr",
+  "panel.serverDown": "Herdr server is not running",
+  "panel.empty": "No panes",
+  "panel.shell": "shell",
+  "panel.agents": {
+    "one": "%1 agent pane",
+    "other": "%1 agent panes"
+  },
+  "panel.ctx": "ctx %1",
+  "panel.version": "v%1",
+  "panel.openHerdr": "Open Herdr",
+  "panel.newWorkspace": "New workspace",
+  "panel.tab": "Tab"
+}
