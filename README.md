@@ -5,7 +5,8 @@ manager for AI coding agents. It shows the live session — workspaces, tabs,
 panes, the agent detected in each pane, and context usage — plus buttons to
 open Herdr and create a new workspace.
 
-![panel](assets/screenshot.png)
+<img width="625" height="497" alt="image" src="https://github.com/user-attachments/assets/bc62e853-7aeb-4c75-8c42-056bd59dcfe8" />
+
 
 ## Install
 
