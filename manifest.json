@@ -6,7 +6,9 @@
   "author": "jesper",
   "license": "MIT",
   "description": "Live Herdr session state in the bar: workspaces, tabs, panes, and the agent running in each pane.",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
@@ -17,7 +19,8 @@
     "defaultSection": "right",
     "allowMultiple": false,
     "defaults": {
-      "refreshIntervalSec": 3
+      "refreshIntervalSec": 3,
+      "remotes": ""
     },
     "schema": [
       {
@@ -28,6 +31,13 @@
         "max": 60,
         "step": 1,
         "defaultValue": 3
+      },
+      {
+        "key": "remotes",
+        "type": "string",
+        "label": "Remote machines (comma-separated herdr machine labels)",
+        "defaultValue": "",
+        "description": "Saved herdr SSH machines to show as remote sections. Set with: omarchy bar set jesper.herdr remotes \"vps,ci\""
       }
     ]
   }

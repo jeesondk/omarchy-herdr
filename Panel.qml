@@ -75,6 +75,26 @@ Panel {
     if (!workspaceProc.running) workspaceProc.running = true
   }
 
+  // Comma-separated `herdr machine` labels to show as remote sections,
+  // e.g. `omarchy bar set jesper.herdr remotes "vps,ci"`.
+  readonly property string remotesSetting: String(setting("remotes", ""))
+  readonly property var remoteLabels: remotesSetting.split(",").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" })
+
+  function attachRemote(remote) {
+    if (!root.bar || typeof root.bar.run !== "function") return
+    var cmd = "omarchy launch terminal herdr --remote " + Util.shellQuote(String(remote.target || ""))
+    if (remote.session) cmd += " --session " + Util.shellQuote(String(remote.session))
+    root.bar.run(cmd)
+    root.close()
+  }
+
+  function newRemoteWorkspace(name) {
+    if (!remoteWsProc.running) {
+      remoteWsProc.command = ["herdr", "--machine", name, "workspace", "create", "--focus"]
+      remoteWsProc.running = true
+    }
+  }
+
   Component.onCompleted: refresh()
   onOpenedChanged: if (opened) refresh()
 
@@ -93,7 +113,8 @@ Panel {
     id: stateProc
     // Absolute paths: Quickshell's Process did not resolve bare names via PATH,
     // which left the widget on its "server down" state.
-    command: ["/usr/bin/python3", root.pluginDir + "/bin/omarchy-herdr-state"]
+    command: ["/usr/bin/python3", root.pluginDir + "/bin/omarchy-herdr-state",
+              "--remotes", root.remoteLabels.join(",")]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -108,6 +129,11 @@ Panel {
   Process {
     id: workspaceProc
     command: ["herdr", "workspace", "create", "--focus"]
+    onExited: root.refresh()
+  }
+
+  Process {
+    id: remoteWsProc
     onExited: root.refresh()
   }
 
@@ -130,6 +156,103 @@ Panel {
       if (b === Qt.LeftButton) root.toggle()
     }
   }
+
+  // One host's workspace tree, reused for the local session and each remote.
+  component WorkspaceSection:           Column {
+            width: parent.width
+            spacing: Style.space(10)
+            visible: workspacesModel.length > 0
+
+            Repeater {
+              model: workspacesModel
+
+              Column {
+                width: parent.width
+                spacing: Style.space(6)
+
+                PanelSectionHeader {
+                  width: parent.width
+                  text: String(modelData.label || modelData.id || "")
+                }
+
+                Repeater {
+                  model: modelData.tabs || []
+
+                  Column {
+                    width: parent.width
+                    spacing: Style.space(4)
+
+                    Text {
+                      text: strings.t("panel.tab") + " " + String(modelData.label || "")
+                      textFormat: Text.PlainText
+                      color: Commons.Color.muted
+                      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                      font.pixelSize: Style.font.caption
+                      font.bold: modelData.focused === true
+                      elide: Text.ElideRight
+                      width: parent.width
+                    }
+
+                    Repeater {
+                      model: modelData.panes || []
+
+                      Row {
+                        width: parent.width
+                        spacing: Style.space(8)
+
+                        Rectangle {
+                          width: Style.space(8)
+                          height: width
+                          radius: width / 2
+                          color: root.statusColor(modelData.status)
+                          anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Text {
+                          text: root.paneAgent(modelData) || strings.t("panel.shell")
+                          textFormat: Text.PlainText
+                          color: root.bar ? root.bar.foreground : Commons.Color.foreground
+                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                          font.pixelSize: Style.font.caption
+                          font.bold: root.paneAgent(modelData) !== ""
+                          width: Style.space(70)
+                          elide: Text.ElideRight
+                        }
+
+                        Text {
+                          text: String(modelData.title || modelData.id || "")
+                          textFormat: Text.PlainText
+                          color: Commons.Color.muted
+                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                          font.pixelSize: Style.font.caption
+                          elide: Text.ElideRight
+                          // Row children: status dot (8) + agent (70) + this title
+                          // + token slot (76), plus 3 gaps of 8 between 4 children.
+                          width: Math.max(0, parent.width - Style.space(8) - Style.space(70) - Style.space(76) - Style.space(8) * 3)
+                        }
+
+                        // Fixed-width slot so the title's width math is stable
+                        // and the count never lands past the panel edge.
+                        Text {
+                          id: tokenText
+                          width: Style.space(76)
+                          horizontalAlignment: Text.AlignRight
+                          text: root.tokenTotal(modelData) > 0
+                            ? strings.t("panel.ctx").arg(Commons.I18n.formatNumber(Math.round(root.tokenTotal(modelData))))
+                            : ""
+                          textFormat: Text.PlainText
+                          color: Commons.Color.muted
+                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                          font.pixelSize: Style.font.caption
+                          anchors.verticalCenter: parent.verticalCenter
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
 
   KeyboardPanel {
     id: panel
@@ -229,101 +352,79 @@ Panel {
           }
 
           // ---------- Workspaces, tabs, panes ----------
-          Column {
-            width: parent.width
-            spacing: Style.space(10)
-            visible: root.workspaces.length > 0
+          WorkspaceSection {
+            workspacesModel: root.workspaces
+          }
 
-            Repeater {
-              model: root.workspaces
+          // ---------- Remote machines ----------
+          Repeater {
+            model: root.state.remotes || []
 
-              Column {
+            Column {
+              width: parent.width
+              spacing: Style.space(10)
+
+              Row {
                 width: parent.width
-                spacing: Style.space(6)
+                spacing: Style.space(8)
 
-                PanelSectionHeader {
-                  width: parent.width
-                  text: String(modelData.label || modelData.id || "")
+                Rectangle {
+                  width: Style.space(8)
+                  height: width
+                  radius: width / 2
+                  color: modelData.up ? Commons.Color.accent : Commons.Color.urgent
+                  anchors.verticalCenter: parent.verticalCenter
                 }
 
-                Repeater {
-                  model: modelData.tabs || []
-
-                  Column {
-                    width: parent.width
-                    spacing: Style.space(4)
-
-                    Text {
-                      text: strings.t("panel.tab") + " " + String(modelData.label || "")
-                      textFormat: Text.PlainText
-                      color: Commons.Color.muted
-                      font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                      font.pixelSize: Style.font.caption
-                      font.bold: modelData.focused === true
-                      elide: Text.ElideRight
-                      width: parent.width
-                    }
-
-                    Repeater {
-                      model: modelData.panes || []
-
-                      Row {
-                        width: parent.width
-                        spacing: Style.space(8)
-
-                        Rectangle {
-                          width: Style.space(8)
-                          height: width
-                          radius: width / 2
-                          color: root.statusColor(modelData.status)
-                          anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        Text {
-                          text: root.paneAgent(modelData) || strings.t("panel.shell")
-                          textFormat: Text.PlainText
-                          color: root.bar ? root.bar.foreground : Commons.Color.foreground
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.caption
-                          font.bold: root.paneAgent(modelData) !== ""
-                          width: Style.space(70)
-                          elide: Text.ElideRight
-                        }
-
-                        Text {
-                          text: String(modelData.title || modelData.id || "")
-                          textFormat: Text.PlainText
-                          color: Commons.Color.muted
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.caption
-                          elide: Text.ElideRight
-                          // Row children: status dot (8) + agent (70) + this title
-                          // + token slot (76), plus 3 gaps of 8 between 4 children.
-                          width: Math.max(0, parent.width - Style.space(8) - Style.space(70) - Style.space(76) - Style.space(8) * 3)
-                        }
-
-                        // Fixed-width slot so the title's width math is stable
-                        // and the count never lands past the panel edge.
-                        Text {
-                          id: tokenText
-                          width: Style.space(76)
-                          horizontalAlignment: Text.AlignRight
-                          text: root.tokenTotal(modelData) > 0
-                            ? strings.t("panel.ctx").arg(Commons.I18n.formatNumber(Math.round(root.tokenTotal(modelData))))
-                            : ""
-                          textFormat: Text.PlainText
-                          color: Commons.Color.muted
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.caption
-                          anchors.verticalCenter: parent.verticalCenter
-                        }
-                      }
-                    }
-                  }
+                Text {
+                  text: String(modelData.name || "")
+                  textFormat: Text.PlainText
+                  color: root.bar ? root.bar.foreground : Commons.Color.foreground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  elide: Text.ElideRight
+                  width: parent.width - attachBtn.implicitWidth - newRemoteBtn.implicitWidth - Style.space(8) * 4
                 }
+
+                Button {
+                  id: attachBtn
+                  visible: modelData.up && !!modelData.target
+                  text: strings.t("panel.attach")
+                  fontSize: Style.font.caption
+                  foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  onClicked: root.attachRemote(modelData)
+                }
+
+                Button {
+                  id: newRemoteBtn
+                  visible: modelData.up
+                  text: strings.t("panel.newWorkspace")
+                  iconText: "\uf067"
+                  fontSize: Style.font.caption
+                  foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  onClicked: root.newRemoteWorkspace(String(modelData.name || ""))
+                }
+              }
+
+              Text {
+                visible: !modelData.up
+                text: strings.t("panel.unreachable")
+                textFormat: Text.PlainText
+                color: Commons.Color.urgent
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                width: parent.width
+              }
+
+              WorkspaceSection {
+                workspacesModel: modelData.workspaces || []
               }
             }
           }
+
 
           Text {
             visible: !root.state.serverUp || root.workspaces.length === 0

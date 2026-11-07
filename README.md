@@ -28,6 +28,23 @@ in the bar. Move it with `omarchy bar move jesper.herdr --section right`.
 - Buttons: **Open Herdr** (runs `omarchy launch terminal herdr`) and
   **New workspace** (`herdr workspace create --focus`).
 
+## Remote machines over SSH
+
+Herdr can manage remote servers (`herdr machine add <ssh-target>`). To show
+saved machines in the panel as remote sections — their workspaces, tabs, panes
+and agents, queried through `herdr --machine <label> ...` over SSH — list
+their labels in the widget settings:
+
+```bash
+omarchy bar set jesper.herdr remotes "vps,ci"
+```
+
+Each remote section shows a status dot (unreachable remotes say so), an
+**Attach** button (opens the remote TUI via `herdr --remote <target>` in the
+default terminal), a **New workspace** button (`herdr --machine <label>
+workspace create --focus`), and the remote's live workspace tree. Remote
+polls have a longer timeout and never block the local section.
+
 ## How it works
 
 The widget polls `bin/omarchy-herdr-state` (shipped in this repo, run with the

@@ -1,20 +1,32 @@
 #!/usr/bin/python3
-"""Print the live Herdr session state as one JSON line, for the jesper.herdr bar widget.
+"""Print live Herdr session state as one JSON line, for the jesper.herdr bar widget.
 
-Combines `herdr api snapshot` and `herdr agent list`. Herdr's recognized-agent
-list is closed in the server, so a pane running an agent it doesn't know (e.g.
-vibe-rs) stays at agent_status "unknown"; for those panes the foreground
-process (`herdr pane process-info`) identifies the agent and its own status
-line (`herdr pane read`, e.g. "ctx 46.4k/800k") gives context usage.
+Local host plus any saved remote machines:
+
+    omarchy-herdr-state [--remotes label1,label2]
+
+Local state comes from `herdr api snapshot` / `herdr agent list`. Each remote
+label is queried through `herdr --machine <label> ...` (herdr proxies API
+commands to the remote server over SSH) and tagged with the label; the
+machine's SSH target (for attaching a TUI with `herdr --remote <target>`)
+comes from `herdr machine list --json`.
+
+Herdr's recognized-agent list is closed in the server, so a pane running an
+agent it doesn't know (e.g. vibe-rs) stays at agent_status "unknown"; for
+those panes the foreground process (`herdr ... pane process-info`) identifies
+the agent and its own status line (`herdr ... pane read`, e.g.
+"ctx 46.4k/800k") gives context usage.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
 
 HERDR_TIMEOUT_SECONDS = 4
+REMOTE_TIMEOUT_SECONDS = 10
 
 PROCESS_AGENT_LABELS = {
   "vibe": "vibe",
@@ -27,9 +39,9 @@ CTX_RE = re.compile(r"ctx\s*[^\d\s]*\s*([0-9][0-9.,]*)\s*([kmb])?\s*/\s*([0-9][0
 AMOUNT_RE = re.compile(r"^\s*([0-9][0-9.,]*)\s*([kmb])?\s*$", re.IGNORECASE)
 
 
-def run_json(*args):
+def run_json(prefix, *args, timeout=HERDR_TIMEOUT_SECONDS):
   try:
-    proc = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=HERDR_TIMEOUT_SECONDS)
+    proc = subprocess.run(["herdr", *prefix, *args], capture_output=True, text=True, timeout=timeout)
   except (OSError, subprocess.TimeoutExpired):
     return None
   if proc.returncode != 0:
@@ -43,9 +55,9 @@ def run_json(*args):
   return None
 
 
-def run_text(*args) -> str:
+def run_text(prefix, *args, timeout=HERDR_TIMEOUT_SECONDS) -> str:
   try:
-    proc = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=HERDR_TIMEOUT_SECONDS)
+    proc = subprocess.run(["herdr", *prefix, *args], capture_output=True, text=True, timeout=timeout)
   except (OSError, subprocess.TimeoutExpired):
     return ""
   return proc.stdout if proc.returncode == 0 else ""
@@ -66,8 +78,8 @@ def label_from_process_name(name):
   return PROCESS_AGENT_LABELS.get(base)
 
 
-def pane_process_label(pane_id):
-  result = run_json("pane", "process-info", "--pane", pane_id) or {}
+def pane_process_label(prefix, pane_id):
+  result = run_json(prefix, "pane", "process-info", "--pane", pane_id) or {}
   for proc in (result.get("process_info") or {}).get("foreground_processes") or []:
     if not isinstance(proc, dict):
       continue
@@ -78,8 +90,8 @@ def pane_process_label(pane_id):
   return None
 
 
-def pane_context_used(pane_id):
-  text = run_text("pane", "read", pane_id, "--source", "visible", "--lines", "8")
+def pane_context_used(prefix, pane_id):
+  text = run_text(prefix, "pane", "read", pane_id, "--source", "visible", "--lines", "8")
   match = None
   for match in CTX_RE.finditer(text):
     pass
@@ -88,14 +100,15 @@ def pane_context_used(pane_id):
   return parse_amount(f"{match.group(1)}{match.group(2) or ''}")
 
 
-def main():
-  snapshot_result = run_json("api", "snapshot")
+def collect_host(prefix, timeout):
+  """One host's (local or remote) workspaces/tabs/panes, or None when the
+  host didn't answer."""
+  snapshot_result = run_json(prefix, "api", "snapshot", timeout=timeout)
   snapshot = (snapshot_result or {}).get("snapshot")
   if not isinstance(snapshot, dict):
-    print(json.dumps({"serverUp": False, "version": "", "focused": {}, "workspaces": []}))
-    return
+    return None
 
-  agents_result = run_json("agent", "list") or {}
+  agents_result = run_json(prefix, "agent", "list", timeout=timeout) or {}
   agents_by_pane = {
     agent.get("pane_id"): agent
     for agent in agents_result.get("agents") or []
@@ -115,9 +128,9 @@ def main():
     proc_agent = None
     ctx_used = None
     if status == "unknown" and not agent and not display_agent and pane_id:
-      proc_agent = pane_process_label(pane_id)
+      proc_agent = pane_process_label(prefix, pane_id)
       if proc_agent:
-        ctx_used = pane_context_used(pane_id)
+        ctx_used = pane_context_used(prefix, pane_id)
     panes.append({
       "id": pane_id,
       "tab_id": pane.get("tab_id"),
@@ -159,8 +172,7 @@ def main():
       "tabs": tabs_by_workspace.get(workspace.get("workspace_id"), []),
     })
 
-  print(json.dumps({
-    "serverUp": True,
+  return {
     "version": snapshot.get("version") or "",
     "focused": {
       "workspace_id": snapshot.get("focused_workspace_id"),
@@ -168,6 +180,54 @@ def main():
       "pane_id": snapshot.get("focused_pane_id"),
     },
     "workspaces": workspaces,
+  }
+
+
+def machine_catalog():
+  """label -> {target, session} from `herdr machine list --json`."""
+  result = run_json([], "machine", "list", "--json") or {}
+  catalog = {}
+  for machine in result.get("machines") or result.get("result", {}).get("machines") or []:
+    if isinstance(machine, dict) and machine.get("label"):
+      catalog[str(machine["label"])] = {
+        "target": str(machine.get("target") or ""),
+        "session": machine.get("session"),
+      }
+  return catalog
+
+
+def main():
+  parser = argparse.ArgumentParser(description="Print Herdr session state as JSON")
+  parser.add_argument("--remotes", default="", help="comma-separated herdr machine labels to include as remotes")
+  args = parser.parse_args()
+
+  local = collect_host([], HERDR_TIMEOUT_SECONDS)
+  if local is None:
+    print(json.dumps({"serverUp": False, "version": "", "focused": {}, "workspaces": [], "remotes": []}))
+    return
+
+  remotes = []
+  labels = [label.strip() for label in args.remotes.split(",") if label.strip()]
+  if labels:
+    catalog = machine_catalog()
+    for label in labels:
+      info = catalog.get(label, {})
+      host = collect_host(["--machine", label], REMOTE_TIMEOUT_SECONDS)
+      entry = {
+        "name": label,
+        "target": info.get("target", ""),
+        "session": info.get("session"),
+        "up": host is not None,
+        "workspaces": host["workspaces"] if host else [],
+      }
+      remotes.append(entry)
+
+  print(json.dumps({
+    "serverUp": True,
+    "version": local["version"],
+    "focused": local["focused"],
+    "workspaces": local["workspaces"],
+    "remotes": remotes,
   }))
 
 

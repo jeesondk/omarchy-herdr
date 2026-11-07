@@ -11,5 +11,7 @@
   "panel.version": "v%1",
   "panel.openHerdr": "Open Herdr",
   "panel.newWorkspace": "New workspace",
-  "panel.tab": "Tab"
+  "panel.tab": "Tab",
+  "panel.attach": "Attach",
+  "panel.unreachable": "unreachable (check `herdr machine status`)"
 }
