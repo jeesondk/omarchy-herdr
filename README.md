@@ -45,6 +45,14 @@ default terminal), a **New workspace** button (`herdr --machine <label>
 workspace create --focus`), and the remote's live workspace tree. Remote
 polls have a longer timeout and never block the local section.
 
+To add a remote from the panel, use the **Add remote** button: enter the SSH
+target (`user@host`) and press Add. The panel runs `herdr machine add
+<target> --label <host>` non-interactively (works when SSH key auth is set
+up) and adds the label to the `remotes` setting automatically. If the add
+needs interactive auth, the panel shows the error and an **Open in terminal**
+button that runs `herdr machine add` interactively; afterwards add the label
+with `omarchy bar set jesper.herdr remotes "<label>"`.
+
 ## How it works
 
 The widget polls `bin/omarchy-herdr-state` (shipped in this repo, run with the

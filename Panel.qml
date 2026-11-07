@@ -95,6 +95,40 @@ Panel {
     }
   }
 
+  property bool addingRemote: false
+  property string addError: ""
+  property string lastAddedLabel: ""
+
+  function labelForTarget(target) {
+    var host = String(target).split("@").pop()
+    return host.split(":")[0] || target
+  }
+
+  // `herdr machine add` works without a tty when SSH key auth is set up; if it
+  // needs interactive auth it exits non-zero and we offer the terminal fallback.
+  function addRemote() {
+    var target = String(remoteField.text || "").trim()
+    if (!target || addProc.running) return
+    root.lastAddedLabel = root.labelForTarget(target)
+    root.addError = ""
+    addProc.command = ["herdr", "machine", "add", target, "--label", root.lastAddedLabel]
+    addProc.running = true
+  }
+
+  function onRemoteAdded(exitCode) {
+    if (exitCode !== 0) {
+      root.addError = strings.t("panel.addFailed")
+      return
+    }
+    root.addingRemote = false
+    var labels = root.remoteLabels.slice()
+    if (labels.indexOf(root.lastAddedLabel) < 0) labels.push(root.lastAddedLabel)
+    setRemotesProc.command = ["/usr/share/omarchy/bin/omarchy", "bar", "set",
+      "jesper.herdr", "remotes", labels.join(",")]
+    setRemotesProc.running = true
+    root.refresh()
+  }
+
   Component.onCompleted: refresh()
   onOpenedChanged: if (opened) refresh()
 
@@ -135,6 +169,24 @@ Panel {
   Process {
     id: remoteWsProc
     onExited: root.refresh()
+  }
+
+  Process {
+    id: addProc
+    property string output: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: addProc.output += text || ""
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: addProc.output += text || ""
+    }
+    onExited: function(code) { root.onRemoteAdded(code) }
+  }
+
+  Process {
+    id: setRemotesProc
   }
 
   implicitWidth: button.implicitWidth
@@ -349,6 +401,71 @@ Panel {
               foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.newWorkspace()
+            }
+
+            Button {
+              text: strings.t("panel.addRemote")
+              iconText: "+"
+              tooltipText: strings.t("panel.addRemote")
+              fontSize: Style.font.caption
+              foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: { root.addError = ""; root.addingRemote = !root.addingRemote }
+            }
+          }
+
+          // ---------- Add remote (inline) ----------
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.addingRemote
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              TextField {
+                id: remoteField
+                width: parent.width - addRemoteBtn.implicitWidth - Style.space(8)
+                placeholderText: strings.t("panel.targetPlaceholder")
+                foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                onAccepted: root.addRemote()
+              }
+
+              Button {
+                id: addRemoteBtn
+                text: strings.t("panel.add")
+                fontSize: Style.font.caption
+                foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+                fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                onClicked: root.addRemote()
+              }
+            }
+
+            Text {
+              visible: root.addError !== ""
+              text: root.addError
+              textFormat: Text.PlainText
+              color: Commons.Color.urgent
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              width: parent.width
+              wrapMode: Text.Wrap
+            }
+
+            Button {
+              visible: root.addError !== ""
+              text: strings.t("panel.openInTerminal")
+              fontSize: Style.font.caption
+              foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: {
+                if (root.bar && typeof root.bar.run === "function")
+                  root.bar.run("omarchy launch terminal herdr machine add")
+                root.close()
+              }
             }
           }
 

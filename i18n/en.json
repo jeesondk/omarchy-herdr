@@ -13,5 +13,10 @@
   "panel.newWorkspace": "New workspace",
   "panel.tab": "Tab",
   "panel.attach": "Attach",
-  "panel.unreachable": "unreachable (check `herdr machine status`)"
+  "panel.unreachable": "unreachable (check `herdr machine status`)",
+  "panel.addRemote": "Add remote",
+  "panel.add": "Add",
+  "panel.targetPlaceholder": "user@host",
+  "panel.addFailed": "Add failed (needs interactive SSH auth?) \u2014 use \"Open in terminal\".",
+  "panel.openInTerminal": "Open in terminal"
 }
