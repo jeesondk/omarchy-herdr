@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -84,6 +85,21 @@ Panel {
     if (!root.bar || typeof root.bar.run !== "function") return
     var cmd = "omarchy launch terminal herdr --remote " + Util.shellQuote(String(remote.target || ""))
     if (remote.session) cmd += " --session " + Util.shellQuote(String(remote.session))
+    root.bar.run(cmd)
+    root.close()
+  }
+
+  // Desktop-app terminals live in herdr-core, not the herdr server, so they
+  // attach with `hc attach <address>` (over ssh -t for a remote).
+  function attachDesktop(remote, desktop, pane) {
+    if (!root.bar || typeof root.bar.run !== "function") return
+    var hc = String((desktop && desktop.hc) || "hc")
+    var address = String(pane.address || pane.id || "")
+    if (address === "") return
+    var attach = Util.shellQuote(hc) + " attach " + Util.shellQuote(address)
+    var cmd = remote && remote.target
+      ? "omarchy launch terminal ssh -t " + Util.shellQuote(String(remote.target)) + " " + Util.shellQuote(attach)
+      : "omarchy launch terminal " + attach
     root.bar.run(cmd)
     root.close()
   }
@@ -249,7 +265,11 @@ Panel {
 
   // One host's workspace tree, reused for the local session and each remote.
   component WorkspaceSection:           Column {
+            id: section
             property var workspacesModel: []
+            // Rows open the pane on click (desktop-app terminals).
+            property bool clickable: false
+            signal paneClicked(var pane)
             width: parent.width
             spacing: Style.space(10)
             visible: workspacesModel.length > 0
@@ -287,55 +307,69 @@ Panel {
                     Repeater {
                       model: modelData.panes || []
 
-                      Row {
+                      Item {
                         width: parent.width
-                        spacing: Style.space(8)
+                        implicitHeight: paneRow.implicitHeight
 
-                        Rectangle {
-                          width: Style.space(8)
-                          height: width
-                          radius: width / 2
-                          color: root.statusColor(modelData.status)
-                          anchors.verticalCenter: parent.verticalCenter
+                        Row {
+                          id: paneRow
+                          width: parent.width
+                          spacing: Style.space(8)
+
+                          Rectangle {
+                            width: Style.space(8)
+                            height: width
+                            radius: width / 2
+                            color: root.statusColor(modelData.status)
+                            anchors.verticalCenter: parent.verticalCenter
+                          }
+
+                          Text {
+                            text: root.paneAgent(modelData) || strings.t("panel.shell")
+                            textFormat: Text.PlainText
+                            color: root.bar ? root.bar.foreground : Commons.Color.foreground
+                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                            font.pixelSize: Style.font.caption
+                            font.bold: root.paneAgent(modelData) !== ""
+                            width: Style.space(70)
+                            elide: Text.ElideRight
+                          }
+
+                          Text {
+                            text: String(modelData.title || modelData.id || "")
+                            textFormat: Text.PlainText
+                            color: Commons.Color.muted
+                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                            font.pixelSize: Style.font.caption
+                            elide: Text.ElideRight
+                            // Row children: status dot (8) + agent (70) + this title
+                            // + token slot (76), plus 3 gaps of 8 between 4 children.
+                            width: Math.max(0, parent.width - Style.space(8) - Style.space(70) - Style.space(76) - Style.space(8) * 3)
+                          }
+
+                          // Fixed-width slot so the title's width math is stable
+                          // and the count never lands past the panel edge.
+                          Text {
+                            id: tokenText
+                            width: Style.space(76)
+                            horizontalAlignment: Text.AlignRight
+                            text: root.tokenTotal(modelData) > 0
+                              ? strings.t("panel.ctx").arg(Commons.I18n.formatNumber(Math.round(root.tokenTotal(modelData))))
+                              : ""
+                            textFormat: Text.PlainText
+                            color: Commons.Color.muted
+                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                            font.pixelSize: Style.font.caption
+                            anchors.verticalCenter: parent.verticalCenter
+                          }
                         }
 
-                        Text {
-                          text: root.paneAgent(modelData) || strings.t("panel.shell")
-                          textFormat: Text.PlainText
-                          color: root.bar ? root.bar.foreground : Commons.Color.foreground
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.caption
-                          font.bold: root.paneAgent(modelData) !== ""
-                          width: Style.space(70)
-                          elide: Text.ElideRight
-                        }
-
-                        Text {
-                          text: String(modelData.title || modelData.id || "")
-                          textFormat: Text.PlainText
-                          color: Commons.Color.muted
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.caption
-                          elide: Text.ElideRight
-                          // Row children: status dot (8) + agent (70) + this title
-                          // + token slot (76), plus 3 gaps of 8 between 4 children.
-                          width: Math.max(0, parent.width - Style.space(8) - Style.space(70) - Style.space(76) - Style.space(8) * 3)
-                        }
-
-                        // Fixed-width slot so the title's width math is stable
-                        // and the count never lands past the panel edge.
-                        Text {
-                          id: tokenText
-                          width: Style.space(76)
-                          horizontalAlignment: Text.AlignRight
-                          text: root.tokenTotal(modelData) > 0
-                            ? strings.t("panel.ctx").arg(Commons.I18n.formatNumber(Math.round(root.tokenTotal(modelData))))
-                            : ""
-                          textFormat: Text.PlainText
-                          color: Commons.Color.muted
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.caption
-                          anchors.verticalCenter: parent.verticalCenter
+                        MouseArea {
+                          anchors.fill: parent
+                          enabled: section.clickable
+                          hoverEnabled: section.clickable
+                          cursorShape: section.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                          onClicked: section.paneClicked(modelData)
                         }
                       }
                     }
@@ -356,161 +390,205 @@ Panel {
     contentHeight: panel.fittedContentHeight(panel.loadedContentHeight)
 
     content: Item {
-      implicitHeight: Math.min(column.implicitHeight, Style.space(440))
+      implicitHeight: Math.min(header.implicitHeight + Style.space(10) + column.implicitHeight, Style.space(440))
       anchors.fill: parent
 
-      Flickable {
-        anchors.fill: parent
-        contentHeight: column.implicitHeight
-        contentWidth: width
-        clip: true
+      // Title and actions stay put; only the workspace trees scroll.
+      Column {
+        id: header
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        spacing: Style.space(10)
 
-        Column {
-          id: column
+        // ---------- Hero: icon · title · status ----------
+        Item {
           width: parent.width
-          spacing: Style.space(10)
+          implicitHeight: Math.max(Style.space(28), heroLabels.implicitHeight)
 
-          // ---------- Hero: icon · title · status ----------
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(Style.space(28), heroLabels.implicitHeight)
-
-            SizedImage {
-              id: heroIcon
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              url: Qt.resolvedUrl("assets/herdr.png")
-              width: Style.space(28)
-              height: Style.space(28)
-              opacity: root.state.serverUp ? 1.0 : 0.5
-            }
-
-            Column {
-              id: heroLabels
-              anchors.left: heroIcon.right
-              anchors.leftMargin: Style.space(14)
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                text: strings.t("panel.title")
-                textFormat: Text.PlainText
-                color: root.bar ? root.bar.foreground : Commons.Color.foreground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-                width: parent.width
-              }
-
-              Text {
-                text: root.heroStatus + (root.state.version ? " · " + strings.t("panel.version").arg(root.state.version) : "")
-                textFormat: Text.PlainText
-                color: Commons.Color.muted
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
-                width: parent.width
-              }
-            }
+          SizedImage {
+            id: heroIcon
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            url: Qt.resolvedUrl("assets/herdr.png")
+            width: Style.space(28)
+            height: Style.space(28)
+            opacity: root.state.serverUp ? 1.0 : 0.5
           }
 
-          // ---------- Actions ----------
+          Column {
+            id: heroLabels
+            anchors.left: heroIcon.right
+            anchors.leftMargin: Style.space(14)
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            Text {
+              text: strings.t("panel.title")
+              textFormat: Text.PlainText
+              color: root.bar ? root.bar.foreground : Commons.Color.foreground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.title
+              font.bold: true
+              elide: Text.ElideRight
+              width: parent.width
+            }
+
+            Text {
+              text: root.heroStatus + (root.state.version ? " · " + strings.t("panel.version").arg(root.state.version) : "")
+              textFormat: Text.PlainText
+              color: Commons.Color.muted
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+              width: parent.width
+            }
+          }
+        }
+
+        // ---------- Actions ----------
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+
+          Button {
+            text: strings.t("panel.openHerdr")
+            iconText: ""
+            tooltipText: strings.t("panel.openHerdr")
+            fontSize: Style.font.caption
+            foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            onClicked: root.openHerdr()
+          }
+
+          Button {
+            text: strings.t("panel.newWorkspace")
+            iconText: ""
+            tooltipText: strings.t("panel.newWorkspace")
+            fontSize: Style.font.caption
+            foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            onClicked: root.newWorkspace()
+          }
+
+          Button {
+            text: strings.t("panel.addRemote")
+            iconText: "+"
+            tooltipText: strings.t("panel.addRemote")
+            fontSize: Style.font.caption
+            foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            onClicked: { root.addError = ""; root.addingRemote = !root.addingRemote }
+          }
+        }
+
+        // ---------- Add remote (inline) ----------
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.addingRemote
+
           Row {
             width: parent.width
             spacing: Style.space(8)
 
-            Button {
-              text: strings.t("panel.openHerdr")
-              iconText: ""
-              tooltipText: strings.t("panel.openHerdr")
-              fontSize: Style.font.caption
+            TextField {
+              text: root.newRemoteTarget
+              onTextEdited: root.newRemoteTarget = text
+              width: parent.width - addRemoteBtn.implicitWidth - Style.space(8)
+              placeholderText: strings.t("panel.targetPlaceholder")
               foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
-              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.openHerdr()
-            }
-
-            Button {
-              text: strings.t("panel.newWorkspace")
-              iconText: ""
-              tooltipText: strings.t("panel.newWorkspace")
-              fontSize: Style.font.caption
-              foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
-              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.newWorkspace()
-            }
-
-            Button {
-              text: strings.t("panel.addRemote")
-              iconText: "+"
-              tooltipText: strings.t("panel.addRemote")
-              fontSize: Style.font.caption
-              foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
-              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: { root.addError = ""; root.addingRemote = !root.addingRemote }
-            }
-          }
-
-          // ---------- Add remote (inline) ----------
-          Column {
-            width: parent.width
-            spacing: Style.space(6)
-            visible: root.addingRemote
-
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-
-              TextField {
-                text: root.newRemoteTarget
-                onTextEdited: root.newRemoteTarget = text
-                width: parent.width - addRemoteBtn.implicitWidth - Style.space(8)
-                placeholderText: strings.t("panel.targetPlaceholder")
-                foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.caption
-                onAccepted: root.addRemote()
-              }
-
-              Button {
-                id: addRemoteBtn
-                text: strings.t("panel.add")
-                fontSize: Style.font.caption
-                foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
-                fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-                onClicked: root.addRemote()
-              }
-            }
-
-            Text {
-              visible: root.addError !== ""
-              text: root.addError
-              textFormat: Text.PlainText
-              color: Commons.Color.urgent
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
-              width: parent.width
-              wrapMode: Text.Wrap
+              onAccepted: root.addRemote()
             }
 
             Button {
-              visible: root.addError !== ""
-              text: strings.t("panel.openInTerminal")
+              id: addRemoteBtn
+              text: strings.t("panel.add")
               fontSize: Style.font.caption
               foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: {
-                if (root.bar && typeof root.bar.run === "function")
-                  root.bar.run("omarchy launch terminal herdr machine add")
-                root.close()
-              }
+              onClicked: root.addRemote()
             }
           }
+
+          Text {
+            visible: root.addError !== ""
+            text: root.addError
+            textFormat: Text.PlainText
+            color: Commons.Color.urgent
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            width: parent.width
+            wrapMode: Text.Wrap
+          }
+
+          Button {
+            visible: root.addError !== ""
+            text: strings.t("panel.openInTerminal")
+            fontSize: Style.font.caption
+            foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            onClicked: {
+              if (root.bar && typeof root.bar.run === "function")
+                root.bar.run("omarchy launch terminal herdr machine add")
+              root.close()
+            }
+          }
+        }
+      }
+
+      Flickable {
+        id: panelFlick
+        anchors.top: header.bottom
+        anchors.topMargin: Style.space(10)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        contentHeight: column.implicitHeight
+        contentWidth: width
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        // Always drawn while there's more than fits: the auto-hiding bar gave
+        // no hint that remote sections sit below the fold.
+        ScrollBar.vertical: ScrollBar {
+          id: panelScroll
+          policy: panelFlick.interactive ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+        }
+
+        Column {
+          id: column
+          // The scroll bar gets its own strip instead of covering the
+          // right-aligned buttons and ctx counts.
+          width: parent.width - (panelFlick.interactive ? panelScroll.width + Style.space(6) : 0)
+          spacing: Style.space(10)
 
           // ---------- Workspaces, tabs, panes ----------
           WorkspaceSection {
             workspacesModel: root.workspaces
+          }
+
+          // ---------- Herdr desktop app (herdr-core) on this host ----------
+          Text {
+            visible: !!root.state.desktop
+            text: strings.t("panel.desktop")
+            textFormat: Text.PlainText
+            color: Commons.Color.muted
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            font.italic: true
+            elide: Text.ElideRight
+            width: parent.width
+          }
+
+          WorkspaceSection {
+            workspacesModel: (root.state.desktop && root.state.desktop.workspaces) || []
+            clickable: true
+            onPaneClicked: function(pane) { root.attachDesktop(null, root.state.desktop, pane) }
           }
 
           // ---------- Remote machines ----------
@@ -518,6 +596,8 @@ Panel {
             model: root.state.remotes || []
 
             Column {
+              // Named so the nested sections' handlers don't see their own modelData.
+              readonly property var remoteEntry: modelData
               width: parent.width
               spacing: Style.space(10)
 
@@ -579,12 +659,30 @@ Panel {
               WorkspaceSection {
                 workspacesModel: modelData.workspaces || []
               }
+
+              Text {
+                visible: !!remoteEntry.desktop
+                text: strings.t("panel.desktop")
+                textFormat: Text.PlainText
+                color: Commons.Color.muted
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.italic: true
+                elide: Text.ElideRight
+                width: parent.width
+              }
+
+              WorkspaceSection {
+                workspacesModel: (remoteEntry.desktop && remoteEntry.desktop.workspaces) || []
+                clickable: true
+                onPaneClicked: function(pane) { root.attachDesktop(remoteEntry, remoteEntry.desktop, pane) }
+              }
             }
           }
 
 
           Text {
-            visible: !root.state.serverUp || root.workspaces.length === 0
+            visible: !root.state.serverUp || (root.workspaces.length === 0 && !root.state.desktop)
             text: root.state.serverUp ? strings.t("panel.empty") : strings.t("panel.serverDown")
             textFormat: Text.PlainText
             color: Commons.Color.muted
@@ -594,6 +692,61 @@ Panel {
           }
         }
       }
+
+      // Two stacked chevrons over a fade: down while there's more below, up
+      // once scrolled away from the top. Clicking one scrolls that way.
+      component ScrollHint: Rectangle {
+        id: hint
+        property bool down: true
+        readonly property bool shown: panelFlick.interactive && (down ? !panelFlick.atYEnd : !panelFlick.atYBeginning)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.rightMargin: panelScroll.width + Style.space(6)
+        height: Style.space(34)
+        opacity: shown ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        gradient: Gradient {
+          GradientStop { position: 0.0; color: hint.down ? "transparent" : Commons.Color.popups.background }
+          GradientStop { position: 0.35; color: hint.down ? "transparent" : Commons.Color.popups.background }
+          GradientStop { position: 1.0; color: hint.down ? Commons.Color.popups.background : "transparent" }
+        }
+
+        Column {
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.bottom: hint.down ? parent.bottom : undefined
+          anchors.top: hint.down ? undefined : parent.top
+          // The glyphs' own line height leaves a gap; pull them together.
+          spacing: -Math.round(Style.font.caption * 0.75)
+
+          Repeater {
+            model: 2
+            Text {
+              text: hint.down ? "\uf107" : "\uf106"
+              textFormat: Text.PlainText
+              color: Commons.Color.muted
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          enabled: hint.shown
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
+            var step = panelFlick.height * 0.8
+            var maxY = panelFlick.contentHeight - panelFlick.height
+            panelFlick.contentY = hint.down
+              ? Math.min(maxY, panelFlick.contentY + step)
+              : Math.max(0, panelFlick.contentY - step)
+          }
+        }
+      }
+
+      ScrollHint { down: false; anchors.top: panelFlick.top }
+      ScrollHint { down: true; anchors.bottom: panelFlick.bottom }
     }
   }
 }

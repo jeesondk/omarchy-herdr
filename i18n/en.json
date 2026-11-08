@@ -19,5 +19,6 @@
   "panel.targetPlaceholder": "user@host",
   "panel.addFailed": "Add failed (needs interactive SSH auth?) \u2014 use \"Open in terminal\".",
   "panel.openInTerminal": "Open in terminal",
-  "panel.needsTerminal": "Needs a terminal (password or install approval) \u2014 finishing in the opened terminal; the remote appears here once saved."
+  "panel.needsTerminal": "Needs a terminal (password or install approval) \u2014 finishing in the opened terminal; the remote appears here once saved.",
+  "panel.desktop": "Herdr desktop app \u2014 click a terminal to attach"
 }

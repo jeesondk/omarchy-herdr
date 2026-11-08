@@ -16,6 +16,13 @@ plus actions to open Herdr, attach to remotes, and create workspaces.
 - **New workspace** — `herdr workspace create --focus`.
 - **Remote machines over SSH** — see below.
 - **Add remote** — inline `herdr machine add` flow with automatic terminal fallback.
+- **Herdr desktop app terminals** — terminals run by the desktop app
+  (herdr-core, `hc`) on this machine and on each remote, with click-to-attach.
+  See below.
+- The header (title and action buttons) stays put while the workspace lists
+  scroll. When the panel overflows, a scroll bar and two stacked chevrons show
+  there is more below (or above, once scrolled down); click the chevrons to
+  scroll.
 
 ## Install
 
@@ -67,6 +74,28 @@ profile ids via `herdr machine list --json`, because a duplicated label makes
 duplicate with `herdr machine remove <id>`. Remote polls use a longer timeout
 and never block the local section.
 
+## Herdr desktop app (herdr-core)
+
+The herdr desktop app doesn't run its terminals in the herdr server. They live
+in herdr-core (`hc`), a separate daemon, so they never appear in the herdr TUI,
+`herdr agent list`, or the workspace trees above. That includes agents started
+with `hc run` / `hc send` from an agent session. The panel shows them anyway:
+
+- For each remote, the exporter runs `hc ls --json` over SSH
+  (`~/.local/bin/hc`, else `hc` on the remote's PATH). Locally it uses `hc` if
+  it's installed. A host without `hc` simply has no desktop section.
+- Terminals are grouped by their `where` label (`Workspace / tab`) under a
+  "Herdr desktop app — click a terminal to attach" caption, with the same
+  status dots and agent names (Claude Code shows as `claude`).
+- **Click a terminal to attach**: it opens a terminal running
+  `ssh -t <target> '<hc> attach <address>'` (or `hc attach <address>`
+  locally). Detach with `ctrl+\`.
+
+The SSH polls use their own control master
+(`$XDG_RUNTIME_DIR/omarchy-herdr-ssh-%C`, kept for 10 minutes), so polling
+every few seconds reuses a single connection. All hosts are queried in
+parallel.
+
 ### Add-remote failure handling
 
 The panel runs `herdr machine add <target> --label <host>` non-interactively.
@@ -85,7 +114,8 @@ an **Open in terminal** fallback button.
 The widget polls `bin/omarchy-herdr-state` (system python3) every
 `refreshIntervalSec` seconds and renders the JSON it prints. The exporter
 reads `herdr api snapshot` / `herdr agent list` over herdr's socket API, for
-the local session and each configured remote.
+the local session and each configured remote, plus `hc ls --json` for the
+desktop app's terminals on each host. Hosts are queried in parallel.
 
 Herdr only recognizes a fixed set of agents, so a pane running an agent it
 doesn't know (e.g. `vibe-rs`) stays at status "unknown" in herdr itself. For
@@ -97,6 +127,14 @@ status line (`herdr pane read`, e.g. `ctx 46.4k/800k`).
 
 - **Widget missing from the bar after edits:** run `omarchy restart shell`;
   if the icon looks stale, clear `~/.cache/quickshell/qmlcache` first.
+- **QML edits don't show up:** the shell logs "Local plugin changed,
+  reloading" on every save, but the running widget keeps its old QML until
+  `omarchy restart shell`. Changes to `bin/omarchy-herdr-state` take effect
+  on the next poll.
+- **Agents you started don't appear under the workspace trees:** they're
+  probably in the desktop app (started with `hc`). Look under the desktop
+  section of that host, or start them with `herdr agent start` /
+  `herdr agent prompt` so they run in the herdr server.
 - **"Herdr server is not running" while herdr runs:** that line is the widget's
   initial state — it means the poll didn't run, not that herdr is down. Check
   the shell log for `jesper.herdr failed` / QML errors

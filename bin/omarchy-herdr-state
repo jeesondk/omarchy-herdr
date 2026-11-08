@@ -16,14 +16,23 @@ agent it doesn't know (e.g. vibe-rs) stays at agent_status "unknown"; for
 those panes the foreground process (`herdr ... pane process-info`) identifies
 the agent and its own status line (`herdr ... pane read`, e.g.
 "ctx 46.4k/800k") gives context usage.
+
+Each host may also run herdr's desktop app, whose terminals live in herdr-core
+(`hc`), a separate daemon the herdr server doesn't see. Those come from
+`hc ls --json` (over SSH for remotes) and are grouped by their "where" label
+("Workspace / tab") into the same workspace -> tab -> pane shape, under
+"desktop" on each host.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 HERDR_TIMEOUT_SECONDS = 4
 REMOTE_TIMEOUT_SECONDS = 10
@@ -186,6 +195,142 @@ def collect_host(prefix, timeout):
   }
 
 
+SHELL_NAMES = {"sh", "bash", "zsh", "fish", "nu", "dash", "ksh", "tcsh", "csh"}
+
+HC_AGENT_LABELS = {
+  "claude-code": "claude",
+}
+
+# herdr-core status.state -> the panel's herdr agent_status vocabulary.
+HC_STATUS = {
+  "working": "working",
+  "idle": "idle",
+  "done": "done",
+  "blocked": "blocked",
+  "waiting": "blocked",
+  "needs_input": "blocked",
+  "permission": "blocked",
+}
+
+# Finds hc on the remote: ~/.local/bin is where the desktop app installs it and
+# isn't on PATH for a non-interactive ssh command. Prints the resolved path on
+# the first line so the panel can attach with it.
+HC_REMOTE_SCRIPT = (
+  'hc="$HOME/.local/bin/hc"; [ -x "$hc" ] || hc="$(command -v hc)" || exit 3; '
+  'printf "%s\\n" "$hc"; exec "$hc" ls --json'
+)
+
+
+def ssh_base(target):
+  # Own control master so polling every few seconds reuses one connection.
+  control_dir = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+  return [
+    "ssh", "-T",
+    "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=5",
+    "-o", "ControlMaster=auto",
+    "-o", f"ControlPath={control_dir}/omarchy-herdr-ssh-%C",
+    "-o", "ControlPersist=600",
+    target,
+  ]
+
+
+def hc_terminals(target):
+  """(hc path, terminal list) from herdr-core on this host (target None) or a
+  remote, or (None, None) when there's no hc or it didn't answer."""
+  if target:
+    command = [*ssh_base(target), HC_REMOTE_SCRIPT]
+  else:
+    path = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
+    if not os.access(path, os.X_OK):
+      return None, None
+    command = [path, "ls", "--json"]
+  try:
+    proc = subprocess.run(command, capture_output=True, text=True, timeout=REMOTE_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)
+  except (OSError, subprocess.TimeoutExpired):
+    return None, None
+  if proc.returncode != 0:
+    return None, None
+  out = proc.stdout
+  if target:
+    path, _, out = out.partition("\n")
+  try:
+    result = json.loads(out)
+  except ValueError:
+    return None, None
+  terminals = result.get("terminals") if isinstance(result, dict) else None
+  if not isinstance(terminals, list):
+    return None, None
+  return path.strip(), terminals
+
+
+def hc_agent(term):
+  status = term.get("status") if isinstance(term.get("status"), dict) else {}
+  app = status.get("app") or term.get("agent") or ""
+  app = str(app).strip()
+  if not app or app.lower() in SHELL_NAMES:
+    return None
+  return HC_AGENT_LABELS.get(app, app)
+
+
+def hc_status(term):
+  raw = term.get("status")
+  state = raw.get("state") if isinstance(raw, dict) else raw
+  return HC_STATUS.get(str(state or ""), "unknown")
+
+
+def collect_desktop(target):
+  """herdr-core terminals as {hc, workspaces}, or None when the host has none."""
+  path, terminals = hc_terminals(target)
+  if not terminals:
+    return None
+  workspaces = {}
+  for term in terminals:
+    if not isinstance(term, dict) or term.get("state", "live") != "live":
+      continue
+    address = str(term.get("address") or "")
+    where = str(term.get("where") or (term.get("labels") or {}).get("where") or "")
+    if " / " in where:
+      space, tab = where.split(" / ", 1)
+    else:
+      space = where or os.path.basename(str(term.get("cwd") or "").rstrip("/")) or "~"
+      tab = address
+    ws = workspaces.setdefault(space, {
+      "id": "hc:" + space,
+      "label": space,
+      "status": "unknown",
+      "focused": False,
+      "tokens": {},
+      "tabs": [],
+    })
+    status = hc_status(term)
+    ws["tabs"].append({
+      "id": "hc:" + address,
+      "label": tab,
+      "number": None,
+      "status": status,
+      "focused": False,
+      "panes": [{
+        "id": address,
+        "tab_id": "hc:" + address,
+        "workspace_id": ws["id"],
+        "title": address,
+        "cwd": str(term.get("cwd") or ""),
+        "status": status,
+        "focused": False,
+        "agent": hc_agent(term),
+        "display_agent": None,
+        "proc_agent": None,
+        "tokens": {},
+        "ctx_used": None,
+        "address": address,
+      }],
+    })
+  if not workspaces:
+    return None
+  return {"hc": path, "workspaces": list(workspaces.values())}
+
+
 def machine_catalog():
   """label -> {id, target, session} from `herdr machine list --json` (a top-level
   array). The id is what `--machine` needs when a label is ambiguous."""
@@ -212,38 +357,55 @@ def main():
   parser.add_argument("--remotes", default="", help="comma-separated herdr machine labels to include as remotes")
   args = parser.parse_args()
 
-  local = collect_host([], HERDR_TIMEOUT_SECONDS)
-  if local is None:
-    print(json.dumps({"serverUp": False, "version": "", "focused": {}, "workspaces": [], "remotes": []}))
-    return
-
-  remotes = []
   labels = [label.strip() for label in args.remotes.split(",") if label.strip()]
-  if labels:
-    catalog = machine_catalog()
+  catalog = machine_catalog() if labels else {}
+
+  # Every host is a few seconds of SSH round trips; query them all at once.
+  with ThreadPoolExecutor(max_workers=4 + 2 * len(labels)) as pool:
+    local_future = pool.submit(collect_host, [], HERDR_TIMEOUT_SECONDS)
+    local_desktop_future = pool.submit(collect_desktop, None)
+    remote_futures = []
     for label in labels:
       info = catalog.get(label, {})
       # Prefer the profile id: a duplicated label makes `--machine <label>`
       # fail with "ambiguous".
       selector = info.get("id") or label
-      host = collect_host(["--machine", selector], REMOTE_TIMEOUT_SECONDS)
-      entry = {
+      target = info.get("target", "")
+      remote_futures.append((
+        label,
+        info,
+        pool.submit(collect_host, ["--machine", selector], REMOTE_TIMEOUT_SECONDS),
+        pool.submit(collect_desktop, target) if target else None,
+      ))
+
+    local = local_future.result()
+    local_desktop = local_desktop_future.result()
+    remotes = []
+    for label, info, host_future, desktop_future in remote_futures:
+      host = host_future.result()
+      desktop = desktop_future.result() if desktop_future else None
+      remotes.append({
         "name": label,
         "target": info.get("target", ""),
         "session": info.get("session"),
         "up": host is not None,
         "workspaces": host["workspaces"] if host else [],
-      }
-      remotes.append(entry)
+        "desktop": desktop,
+      })
+
+  if local is None:
+    print(json.dumps({"serverUp": False, "version": "", "focused": {}, "workspaces": [],
+                      "desktop": local_desktop, "remotes": remotes}))
+    return
 
   print(json.dumps({
     "serverUp": True,
     "version": local["version"],
     "focused": local["focused"],
     "workspaces": local["workspaces"],
+    "desktop": local_desktop,
     "remotes": remotes,
   }))
-
 
 if __name__ == "__main__":
   main()
