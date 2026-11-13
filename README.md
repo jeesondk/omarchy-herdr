@@ -65,7 +65,9 @@ omarchy bar set jesper.herdr remotes "hal"
 Each remote section shows a status dot (red + "unreachable" when down), an
 **Attach** button (opens the remote TUI via `herdr --remote <target>` in the
 default terminal), a **New workspace** button (`herdr --machine <id>
-workspace create --focus`), and the remote's live workspace tree.
+workspace create --focus`), a trash button that removes the remote after a
+confirm (`herdr machine remove <id>` plus dropping the label from `remotes`),
+and the remote's live workspace tree.
 
 Remote state is queried through `herdr --machine <profile-id> api snapshot`
 (herdr proxies the socket API over SSH); the exporter resolves labels to

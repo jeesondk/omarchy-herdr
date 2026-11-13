@@ -386,6 +386,7 @@ def main():
       desktop = desktop_future.result() if desktop_future else None
       remotes.append({
         "name": label,
+        "id": info.get("id", ""),
         "target": info.get("target", ""),
         "session": info.get("session"),
         "up": host is not None,

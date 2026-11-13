@@ -183,6 +183,24 @@ Panel {
     root.addError = strings.t("panel.addFailed")
   }
 
+  // Label awaiting a second click on its remove confirmation ("" = none).
+  property string pendingRemove: ""
+
+  // Mirrors Add remote: forget the saved herdr machine and drop its section.
+  // Without a profile id (label not in herdr's catalog) only the section goes.
+  function removeRemote(remote) {
+    var name = String(remote.name || "")
+    root.pendingRemove = ""
+    if (remote.id && !removeProc.running) {
+      removeProc.command = ["/usr/bin/herdr", "machine", "remove", String(remote.id)]
+      removeProc.running = true
+    }
+    var labels = root.remoteLabels.filter(function(l) { return l !== name })
+    setRemotesProc.command = ["/usr/share/omarchy/bin/omarchy", "bar", "set",
+      "jesper.herdr", "remotes", labels.join(",")]
+    setRemotesProc.running = true
+  }
+
   Component.onCompleted: refresh()
   onOpenedChanged: if (opened) refresh()
 
@@ -241,6 +259,11 @@ Panel {
 
   Process {
     id: setRemotesProc
+    onExited: root.refresh()
+  }
+
+  Process {
+    id: removeProc
   }
 
   implicitWidth: button.implicitWidth
@@ -621,7 +644,7 @@ Panel {
                   font.pixelSize: Style.font.caption
                   font.bold: true
                   elide: Text.ElideRight
-                  width: parent.width - attachBtn.implicitWidth - newRemoteBtn.implicitWidth - Style.space(8) * 4
+                  width: parent.width - attachBtn.implicitWidth - newRemoteBtn.implicitWidth - removeRemoteBtn.implicitWidth - Style.space(8) * 5
                 }
 
                 Button {
@@ -643,6 +666,54 @@ Panel {
                   foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
                   fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
                   onClicked: root.newRemoteWorkspace(String(modelData.name || ""))
+                }
+
+                Button {
+                  id: removeRemoteBtn
+                  iconText: "\uf1f8"
+                  tooltipText: strings.t("panel.removeRemote")
+                  fontSize: Style.font.caption
+                  iconSize: Style.font.caption
+                  foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  active: root.pendingRemove === String(modelData.name || "")
+                  onClicked: root.pendingRemove = active ? "" : String(modelData.name || "")
+                }
+              }
+
+              // Two-step confirm: removing also forgets the saved herdr machine.
+              Row {
+                width: parent.width
+                spacing: Style.space(8)
+                visible: root.pendingRemove === String(modelData.name || "")
+
+                Text {
+                  text: strings.t("panel.removeConfirm").arg(String(modelData.name || ""))
+                  textFormat: Text.PlainText
+                  color: Commons.Color.urgent
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  width: parent.width - confirmRemoveBtn.implicitWidth - cancelRemoveBtn.implicitWidth - Style.space(8) * 2
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Button {
+                  id: confirmRemoveBtn
+                  text: strings.t("panel.remove")
+                  fontSize: Style.font.caption
+                  foreground: Commons.Color.urgent
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  onClicked: root.removeRemote(modelData)
+                }
+
+                Button {
+                  id: cancelRemoveBtn
+                  text: strings.t("panel.cancel")
+                  fontSize: Style.font.caption
+                  foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  onClicked: root.pendingRemove = ""
                 }
               }
 
