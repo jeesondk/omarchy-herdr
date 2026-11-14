@@ -57,13 +57,19 @@ helper can reach instead.
   herdr's config folder (`~/.config/herdr`, where its socket lives) mounted
   read-only. They cannot read your SSH keys or other files, write anywhere, or
   reach the network.
+- **Local desktop-app terminals are sandboxed too.** The local `hc` call runs
+  the same way, with only herdr-core's runtime folder
+  (`$XDG_RUNTIME_DIR/herdr-core`, its socket) visible. This applies while a
+  herdr-core server is running; if none is, `hc` runs unsandboxed, because
+  inside the sandbox it would start a private, empty core and report no
+  terminals.
 - **Fallback.** If `bwrap` is not installed or user namespaces are disabled,
   the same calls run unsandboxed so the widget keeps working. The exporter's
   JSON output has a `sandboxed` field that says which happened; set
   `OMARCHY_HERDR_NO_SANDBOX=1` to turn the sandbox off.
 - **Not sandboxed:** remote machines (herdr and `hc` are reached over your own
-  SSH setup, which needs your SSH config, keys or agent, and the network), the
-  saved-machine list, and the local `hc` call for desktop-app terminals.
+  SSH setup, which needs your SSH config, keys or agent, and the network) and
+  the saved-machine list.
 - **Actions you click** run as you: opening a terminal
   (`omarchy launch terminal …`), creating a workspace, adding or removing a
   remote (`herdr machine add/remove`), and saving the `remotes` setting

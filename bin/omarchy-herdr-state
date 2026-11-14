@@ -26,9 +26,10 @@ Each host may also run herdr's desktop app, whose terminals live in herdr-core
 Local `herdr` calls run inside a bubblewrap sandbox when one is available: a
 read-only system, no network, and of the home directory only herdr's own
 config folder (where its socket lives), read-only. Without bwrap or user
-namespaces they run directly. Remote calls (including reading the saved
-machine list) need SSH and the local `hc` call needs herdr-core's own socket,
-so those are not sandboxed. Set
+namespaces they run directly. The local `hc` call is sandboxed the same way,
+with only herdr-core's runtime folder (its socket) visible, whenever a core
+is already running. Remote calls (including reading the saved machine list)
+need SSH, so those are not sandboxed. Set
 OMARCHY_HERDR_NO_SANDBOX=1 to turn the sandbox off.
 """
 
@@ -66,6 +67,40 @@ def herdr_dir():
   return os.path.join(config_home, "herdr")
 
 
+def sandbox_base(home):
+  """bwrap arguments shared by every sandboxed call: a read-only system, no
+  network, and empty home, /tmp and runtime directories."""
+  args = [shutil.which("bwrap"), "--unshare-all", "--die-with-parent", "--new-session",
+          "--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc",
+          "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", home]
+  # /bin, /lib and friends are symlinks into /usr on Arch; keep whichever
+  # shape this system has.
+  for path in ("/bin", "/sbin", "/lib", "/lib64"):
+    if os.path.islink(path):
+      args += ["--symlink", os.readlink(path), path]
+    elif os.path.isdir(path):
+      args += ["--ro-bind", path, path]
+  return args
+
+
+def sandbox_env(home, names=(), prefixes=()):
+  args = ["--clearenv", "--setenv", "HOME", home, "--setenv", "PATH", "/usr/bin",
+          "--setenv", "LANG", os.environ.get("LANG") or "C.UTF-8"]
+  for name, value in os.environ.items():
+    if value and (name in names or name.startswith(tuple(prefixes) or ("\0",))):
+      args += ["--setenv", name, value]
+  return args
+
+
+def sandbox_works(args):
+  try:
+    probe = subprocess.run([*args, "--version"], capture_output=True, timeout=HERDR_TIMEOUT_SECONDS,
+                           stdin=subprocess.DEVNULL)
+  except (OSError, subprocess.TimeoutExpired):
+    return False
+  return probe.returncode == 0
+
+
 @functools.lru_cache(maxsize=1)
 def sandbox_prefix():
   """bwrap arguments confining a local herdr call, or () when the sandbox
@@ -79,34 +114,48 @@ def sandbox_prefix():
   if not bwrap or not herdr or not os.path.isdir(config):
     return ()
 
-  args = [bwrap, "--unshare-all", "--die-with-parent", "--new-session",
-          "--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc",
-          "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", home]
-  # /bin, /lib and friends are symlinks into /usr on Arch; keep whichever
-  # shape this system has.
-  for path in ("/bin", "/sbin", "/lib", "/lib64"):
-    if os.path.islink(path):
-      args += ["--symlink", os.readlink(path), path]
-    elif os.path.isdir(path):
-      args += ["--ro-bind", path, path]
+  args = sandbox_base(home)
   args += ["--ro-bind", config, config]
   # A herdr installed outside /usr (e.g. ~/.local/bin) is bound on its own.
   binary = os.path.realpath(herdr)
   if not binary.startswith("/usr/"):
     args += ["--ro-bind", binary, binary]
-  args += ["--clearenv", "--setenv", "HOME", home, "--setenv", "PATH", "/usr/bin",
-           "--setenv", "LANG", os.environ.get("LANG") or "C.UTF-8"]
-  for name in ("HERDR_SOCKET_PATH", "XDG_CONFIG_HOME"):
-    if os.environ.get(name):
-      args += ["--setenv", name, os.environ[name]]
+  args += sandbox_env(home, names=("HERDR_SOCKET_PATH", "XDG_CONFIG_HOME"))
   args += ["--", binary]
+  return tuple(args) if sandbox_works(args) else ()
 
-  try:
-    probe = subprocess.run([*args, "--version"], capture_output=True, timeout=HERDR_TIMEOUT_SECONDS,
-                           stdin=subprocess.DEVNULL)
-  except (OSError, subprocess.TimeoutExpired):
+
+def hc_sandbox_prefix(path):
+  """bwrap arguments confining the local `hc` (herdr-core) call: of the
+  user's files only herdr-core's runtime folder, where its socket lives,
+  read-only. () when the sandbox can't be used, or when no core is running:
+  hc would then start a private, empty core inside the sandbox and report no
+  terminals."""
+  if os.environ.get("OMARCHY_HERDR_NO_SANDBOX") == "1" or not shutil.which("bwrap"):
     return ()
-  return tuple(args) if probe.returncode == 0 else ()
+  runtime = os.environ.get("XDG_RUNTIME_DIR")
+  if not runtime:
+    return ()
+  core_dir = os.path.join(runtime, "herdr-core")
+  try:
+    has_socket = any(name.endswith(".sock") for name in os.listdir(core_dir))
+  except OSError:
+    return ()
+  if not has_socket:
+    return ()
+
+  home = os.path.expanduser("~")
+  binary = os.path.realpath(path)
+  args = sandbox_base(home)
+  args += ["--tmpfs", runtime, "--ro-bind", core_dir, core_dir]
+  if not binary.startswith("/usr/"):
+    args += ["--ro-bind", binary, binary]
+  # hc is one binary answering to several names; keep the name it was found as.
+  if os.path.abspath(path) != binary:
+    args += ["--symlink", binary, os.path.abspath(path)]
+  args += sandbox_env(home, names=("XDG_RUNTIME_DIR",), prefixes=("HC_", "HERDR_CORE_"))
+  args += ["--", os.path.abspath(path)]
+  return tuple(args) if sandbox_works(args) else ()
 
 
 def herdr_command(prefix, args, sandboxed=True):
@@ -315,7 +364,7 @@ def hc_terminals(target):
     path = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
     if not os.access(path, os.X_OK):
       return None, None
-    command = [path, "ls", "--json"]
+    command = [*(hc_sandbox_prefix(path) or (path,)), "ls", "--json"]
   try:
     proc = subprocess.run(command, capture_output=True, text=True, timeout=REMOTE_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)
   except (OSError, subprocess.TimeoutExpired):
