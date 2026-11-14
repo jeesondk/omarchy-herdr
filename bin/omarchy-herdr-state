@@ -22,11 +22,20 @@ Each host may also run herdr's desktop app, whose terminals live in herdr-core
 `hc ls --json` (over SSH for remotes) and are grouped by their "where" label
 ("Workspace / tab") into the same workspace -> tab -> pane shape, under
 "desktop" on each host.
+
+Local `herdr` calls run inside a bubblewrap sandbox when one is available: a
+read-only system, no network, and of the home directory only herdr's own
+config folder (where its socket lives), read-only. Without bwrap or user
+namespaces they run directly. Remote calls (including reading the saved
+machine list) need SSH and the local `hc` call needs herdr-core's own socket,
+so those are not sandboxed. Set
+OMARCHY_HERDR_NO_SANDBOX=1 to turn the sandbox off.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import re
@@ -48,9 +57,71 @@ CTX_RE = re.compile(r"ctx\s*[^\d\s]*\s*([0-9][0-9.,]*)\s*([kmb])?\s*/\s*([0-9][0
 AMOUNT_RE = re.compile(r"^\s*([0-9][0-9.,]*)\s*([kmb])?\s*$", re.IGNORECASE)
 
 
-def run_json(prefix, *args, timeout=HERDR_TIMEOUT_SECONDS):
+def herdr_dir():
+  """The folder holding herdr's socket and config."""
+  socket_path = os.environ.get("HERDR_SOCKET_PATH")
+  if socket_path:
+    return os.path.dirname(os.path.realpath(socket_path))
+  config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+  return os.path.join(config_home, "herdr")
+
+
+@functools.lru_cache(maxsize=1)
+def sandbox_prefix():
+  """bwrap arguments confining a local herdr call, or () when the sandbox
+  can't be used here (no bwrap, user namespaces disabled, herdr not found)."""
+  if os.environ.get("OMARCHY_HERDR_NO_SANDBOX") == "1":
+    return ()
+  bwrap = shutil.which("bwrap")
+  herdr = shutil.which("herdr")
+  home = os.path.expanduser("~")
+  config = herdr_dir()
+  if not bwrap or not herdr or not os.path.isdir(config):
+    return ()
+
+  args = [bwrap, "--unshare-all", "--die-with-parent", "--new-session",
+          "--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc",
+          "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", home]
+  # /bin, /lib and friends are symlinks into /usr on Arch; keep whichever
+  # shape this system has.
+  for path in ("/bin", "/sbin", "/lib", "/lib64"):
+    if os.path.islink(path):
+      args += ["--symlink", os.readlink(path), path]
+    elif os.path.isdir(path):
+      args += ["--ro-bind", path, path]
+  args += ["--ro-bind", config, config]
+  # A herdr installed outside /usr (e.g. ~/.local/bin) is bound on its own.
+  binary = os.path.realpath(herdr)
+  if not binary.startswith("/usr/"):
+    args += ["--ro-bind", binary, binary]
+  args += ["--clearenv", "--setenv", "HOME", home, "--setenv", "PATH", "/usr/bin",
+           "--setenv", "LANG", os.environ.get("LANG") or "C.UTF-8"]
+  for name in ("HERDR_SOCKET_PATH", "XDG_CONFIG_HOME"):
+    if os.environ.get(name):
+      args += ["--setenv", name, os.environ[name]]
+  args += ["--", binary]
+
   try:
-    proc = subprocess.run(["herdr", *prefix, *args], capture_output=True, text=True, timeout=timeout)
+    probe = subprocess.run([*args, "--version"], capture_output=True, timeout=HERDR_TIMEOUT_SECONDS,
+                           stdin=subprocess.DEVNULL)
+  except (OSError, subprocess.TimeoutExpired):
+    return ()
+  return tuple(args) if probe.returncode == 0 else ()
+
+
+def herdr_command(prefix, args, sandboxed=True):
+  """Local calls (no prefix) go through the sandbox; `--machine` calls open
+  SSH connections and run as they are."""
+  if sandboxed and not prefix:
+    sandbox = sandbox_prefix()
+    if sandbox:
+      return [*sandbox, *args]
+  return ["herdr", *prefix, *args]
+
+
+def run_json(prefix, *args, timeout=HERDR_TIMEOUT_SECONDS, sandboxed=True):
+  try:
+    proc = subprocess.run(herdr_command(prefix, args, sandboxed), capture_output=True, text=True, timeout=timeout)
   except (OSError, subprocess.TimeoutExpired):
     return None
   if proc.returncode != 0:
@@ -69,7 +140,7 @@ def run_json(prefix, *args, timeout=HERDR_TIMEOUT_SECONDS):
 
 def run_text(prefix, *args, timeout=HERDR_TIMEOUT_SECONDS) -> str:
   try:
-    proc = subprocess.run(["herdr", *prefix, *args], capture_output=True, text=True, timeout=timeout)
+    proc = subprocess.run(herdr_command(prefix, args), capture_output=True, text=True, timeout=timeout)
   except (OSError, subprocess.TimeoutExpired):
     return ""
   return proc.stdout if proc.returncode == 0 else ""
@@ -334,7 +405,9 @@ def collect_desktop(target):
 def machine_catalog():
   """label -> {id, target, session} from `herdr machine list --json` (a top-level
   array). The id is what `--machine` needs when a label is ambiguous."""
-  result = run_json([], "machine", "list", "--json")
+  # Part of the remote path (only read when remotes are configured), and the
+  # saved-machine catalog isn't guaranteed to live in herdr's config folder.
+  result = run_json([], "machine", "list", "--json", sandboxed=False)
   if isinstance(result, dict) and "result" in result:
     result = result["result"]
   if isinstance(result, dict):
@@ -396,7 +469,7 @@ def main():
 
   if local is None:
     print(json.dumps({"serverUp": False, "version": "", "focused": {}, "workspaces": [],
-                      "desktop": local_desktop, "remotes": remotes}))
+                      "desktop": local_desktop, "remotes": remotes, "sandboxed": bool(sandbox_prefix())}))
     return
 
   print(json.dumps({
@@ -406,6 +479,7 @@ def main():
     "workspaces": local["workspaces"],
     "desktop": local_desktop,
     "remotes": remotes,
+    "sandboxed": bool(sandbox_prefix()),
   }))
 
 if __name__ == "__main__":

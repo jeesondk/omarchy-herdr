@@ -44,6 +44,33 @@ The plugin is fully self-contained: the state exporter ships in the repo at
 `bin/omarchy-herdr-state` and is invoked from the plugin directory, so no
 files outside `~/.config/omarchy/plugins/io.github.jeesondk.herdr/` are needed.
 
+## What this plugin can access
+
+Omarchy plugins are not sandboxed: the panel (`Panel.qml`) runs inside
+`omarchy-shell` with your user's rights. The plugin limits what its own
+helper can reach instead.
+
+- **Local polling is sandboxed.** Every few seconds the exporter
+  (`bin/omarchy-herdr-state`) asks the local herdr server for its state. Those
+  `herdr` calls run inside [bubblewrap](https://github.com/containers/bubblewrap)
+  with a read-only system, no network, an empty home directory, and only
+  herdr's config folder (`~/.config/herdr`, where its socket lives) mounted
+  read-only. They cannot read your SSH keys or other files, write anywhere, or
+  reach the network.
+- **Fallback.** If `bwrap` is not installed or user namespaces are disabled,
+  the same calls run unsandboxed so the widget keeps working. The exporter's
+  JSON output has a `sandboxed` field that says which happened; set
+  `OMARCHY_HERDR_NO_SANDBOX=1` to turn the sandbox off.
+- **Not sandboxed:** remote machines (herdr and `hc` are reached over your own
+  SSH setup, which needs your SSH config, keys or agent, and the network), the
+  saved-machine list, and the local `hc` call for desktop-app terminals.
+- **Actions you click** run as you: opening a terminal
+  (`omarchy launch terminal …`), creating a workspace, adding or removing a
+  remote (`herdr machine add/remove`), and saving the `remotes` setting
+  (`omarchy bar set …`).
+- The plugin never uses `sudo`, downloads nothing, and writes nothing outside
+  its own bar settings.
+
 ## Uninstall
 
 ```bash
