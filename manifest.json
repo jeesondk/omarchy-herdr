@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "io.github.jeesondk.herdr",
-  "name": "Herdr",
+  "name": "Herdr Control",
   "version": "1.0.0",
   "author": "jesper",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Herdr",
+    "displayName": "Herdr Control",
     "description": "Live Herdr workspaces, tabs, panes and their agents",
     "category": "System",
     "defaultSection": "right",

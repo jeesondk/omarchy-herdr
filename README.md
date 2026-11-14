@@ -1,4 +1,6 @@
-# io.github.jeesondk.herdr — Herdr bar widget for Omarchy
+# Herdr Control — Herdr bar widget for Omarchy
+
+Plugin ID: `io.github.jeesondk.herdr`
 
 A bar widget and panel for [Herdr](https://herdr.dev/), the terminal workspace
 manager for AI coding agents. It shows the live session — local and remote —
