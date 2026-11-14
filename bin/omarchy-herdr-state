@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Print live Herdr session state as one JSON line, for the jesper.herdr bar widget.
+"""Print live Herdr session state as one JSON line, for the io.github.jeesondk.herdr bar widget.
 
 Local host plus any saved remote machines:
 

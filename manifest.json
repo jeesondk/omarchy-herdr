@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "jesper.herdr",
+  "id": "io.github.jeesondk.herdr",
   "name": "Herdr",
   "version": "1.0.0",
   "author": "jesper",
@@ -37,7 +37,7 @@
         "type": "string",
         "label": "Remote machines (comma-separated herdr machine labels)",
         "defaultValue": "",
-        "description": "Saved herdr SSH machines to show as remote sections. Set with: omarchy bar set jesper.herdr remotes \"vps,ci\""
+        "description": "Saved herdr SSH machines to show as remote sections. Set with: omarchy bar set io.github.jeesondk.herdr remotes \"vps,ci\""
       }
     ]
   }

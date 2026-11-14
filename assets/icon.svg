@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="3 2.5 21 21" width="96" height="96" fill="none">
+  <!-- Shepherd's crook with three herded agents. Drawn in white: the panel
+       paints the theme foreground through this shape's alpha. -->
+  <path d="M8 22V8.5a4.5 4.5 0 0 1 9 0V10a1.6 1.6 0 0 1-3.2 0" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="14" cy="16.6" r="1.5" fill="#fff"/>
+  <circle cx="18.6" cy="16.6" r="1.5" fill="#fff"/>
+  <circle cx="16.3" cy="20.5" r="1.5" fill="#fff"/>
+</svg>

@@ -24,6 +24,15 @@ The timer runs the bridge every 5s; each run re-reports with a fresh `seq`
 (hook authority) and refreshes metadata under a 60s TTL, so display data
 never goes stale while the timer lives.
 
+## Uninstall
+
+```bash
+systemctl --user disable --now herdr-vibe-bridge.timer
+rm ~/.config/systemd/user/herdr-vibe-bridge.service ~/.config/systemd/user/herdr-vibe-bridge.timer
+rm ~/.local/bin/herdr-vibe-bridge
+systemctl --user daemon-reload
+```
+
 ## How it decides
 
 For each pane: `herdr pane process-info` → foreground process name mapped via

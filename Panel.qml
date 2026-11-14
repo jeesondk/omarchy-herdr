@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -11,8 +12,8 @@ import qs.Ui
 // `herdr pane process-info` for agents Herdr itself doesn't recognize.
 Panel {
   id: root
-  moduleName: "jesper.herdr"
-  ipcTarget: "jesper.herdr"
+  moduleName: "io.github.jeesondk.herdr"
+  ipcTarget: "io.github.jeesondk.herdr"
 
   Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
@@ -77,7 +78,7 @@ Panel {
   }
 
   // Comma-separated `herdr machine` labels to show as remote sections,
-  // e.g. `omarchy bar set jesper.herdr remotes "vps,ci"`.
+  // e.g. `omarchy bar set io.github.jeesondk.herdr remotes "vps,ci"`.
   readonly property string remotesSetting: String(setting("remotes", ""))
   readonly property var remoteLabels: remotesSetting.split(",").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" })
 
@@ -159,7 +160,7 @@ Panel {
     var labels = root.remoteLabels.slice()
     if (labels.indexOf(label) < 0) labels.push(label)
     setRemotesProc.command = ["/usr/share/omarchy/bin/omarchy", "bar", "set",
-      "jesper.herdr", "remotes", labels.join(",")]
+      "io.github.jeesondk.herdr", "remotes", labels.join(",")]
     setRemotesProc.running = true
   }
 
@@ -197,7 +198,7 @@ Panel {
     }
     var labels = root.remoteLabels.filter(function(l) { return l !== name })
     setRemotesProc.command = ["/usr/share/omarchy/bin/omarchy", "bar", "set",
-      "jesper.herdr", "remotes", labels.join(",")]
+      "io.github.jeesondk.herdr", "remotes", labels.join(",")]
     setRemotesProc.running = true
   }
 
@@ -275,14 +276,44 @@ Panel {
     bar: root.bar
     opacity: root.state.serverUp ? 1.0 : 0.5
     iconComponent: Component {
-      SizedImage {
-        url: Qt.resolvedUrl("assets/herdr.png")
+      CrookIcon {
         width: Style.bar.iconSize
         height: Style.bar.iconSize
       }
     }
     onPressed: function(b) {
       if (b === Qt.LeftButton) root.toggle()
+    }
+  }
+
+  // The plugin's own mark (a shepherd's crook herding three agents), painted
+  // in the bar's foreground through the SVG's alpha so it follows the theme.
+  component CrookIcon: Item {
+    id: crook
+    property color color: root.bar ? root.bar.foreground : Commons.Color.foreground
+
+    Image {
+      id: crookShape
+      anchors.fill: parent
+      source: Qt.resolvedUrl("assets/icon.svg")
+      fillMode: Image.PreserveAspectFit
+      sourceSize.width: Math.round(Math.min(width, height) * Screen.devicePixelRatio)
+      sourceSize.height: Math.round(Math.min(width, height) * Screen.devicePixelRatio)
+      // Hidden layer: the effect below samples it as a mask.
+      visible: false
+      layer.enabled: true
+    }
+
+    Rectangle {
+      anchors.fill: crookShape
+      color: crook.color
+      layer.enabled: true
+      layer.effect: MultiEffect {
+        maskEnabled: true
+        maskSource: crookShape
+        maskThresholdMin: 0.5
+        maskSpreadAtMin: 1.0
+      }
     }
   }
 
@@ -429,11 +460,10 @@ Panel {
           width: parent.width
           implicitHeight: Math.max(Style.space(28), heroLabels.implicitHeight)
 
-          SizedImage {
+          CrookIcon {
             id: heroIcon
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            url: Qt.resolvedUrl("assets/herdr.png")
             width: Style.space(28)
             height: Style.space(28)
             opacity: root.state.serverUp ? 1.0 : 0.5

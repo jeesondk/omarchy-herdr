@@ -1,15 +1,16 @@
-# jesper.herdr — Herdr bar widget for Omarchy
+# io.github.jeesondk.herdr — Herdr bar widget for Omarchy
 
 A bar widget and panel for [Herdr](https://herdr.dev/), the terminal workspace
 manager for AI coding agents. It shows the live session — local and remote —
 workspaces, tabs, panes, the agent detected in each pane, and context usage —
 plus actions to open Herdr, attach to remotes, and create workspaces.
 
-<img width="625" height="497" alt="image" src="https://github.com/user-attachments/assets/bc62e853-7aeb-4c75-8c42-056bd59dcfe8" />
+![The Herdr panel open from the bar](preview.png)
 
 ## Features
 
-- Bar icon: the Herdr logo (from herdr.dev), dimmed when the local herdr server is down.
+- Bar icon: a shepherd's crook herding three agents, in the theme's foreground
+  colour, dimmed when the local herdr server is down.
 - Panel: per workspace, its tabs, and each pane with a status dot, the agent
   running in it, the pane title, and context tokens (`ctx 48.6k`).
 - **Open Herdr** — `omarchy launch terminal herdr` (attaches to the persistent session).
@@ -35,21 +36,36 @@ omarchy plugin add https://github.com/jeesondk/omarchy-herdr.git --enable
 ```
 
 Then restart the shell (`omarchy restart shell`) if the widget does not appear
-in the bar. Move it with `omarchy bar move jesper.herdr --section right`.
+in the bar. Move it with `omarchy bar move io.github.jeesondk.herdr --section right`.
 
 The plugin is fully self-contained: the state exporter ships in the repo at
 `bin/omarchy-herdr-state` and is invoked from the plugin directory, so no
-files outside `~/.config/omarchy/plugins/jesper.herdr/` are needed.
+files outside `~/.config/omarchy/plugins/io.github.jeesondk.herdr/` are needed.
+
+## Uninstall
+
+```bash
+omarchy plugin remove io.github.jeesondk.herdr
+```
+
+This removes the widget from the bar and deletes
+`~/.config/omarchy/plugins/io.github.jeesondk.herdr/`. The plugin writes nothing outside
+that folder and its own bar settings. Machines saved with **Add remote** are
+herdr's own records and stay in `herdr machine list`; remove them from the
+panel first, or with `herdr machine remove <id>`.
+
+If you installed the optional `contrib/herdr-vibe-bridge`, remove it with the
+commands in its README.
 
 ## Settings
 
-Widget settings live in the `jesper.herdr` entry in
+Widget settings live in the `io.github.jeesondk.herdr` entry in
 `~/.config/omarchy/shell.json`; change them with `omarchy bar set`:
 
 ```bash
-omarchy bar set jesper.herdr refreshIntervalSec 5   # poll interval, seconds (default 3)
-omarchy bar set jesper.herdr remotes "hal,vps"      # remote machine labels to show (default "")
-omarchy bar get jesper.herdr remotes
+omarchy bar set io.github.jeesondk.herdr refreshIntervalSec 5   # poll interval, seconds (default 3)
+omarchy bar set io.github.jeesondk.herdr remotes "hal,vps"      # remote machine labels to show (default "")
+omarchy bar get io.github.jeesondk.herdr remotes
 ```
 
 ## Remote machines over SSH
@@ -59,7 +75,7 @@ Herdr can manage remote servers. Add one from the panel (**Add remote** →
 
 ```bash
 herdr machine add hal.j2-consult.dk --label hal     # interactive: approves remote install, asks password if needed
-omarchy bar set jesper.herdr remotes "hal"
+omarchy bar set io.github.jeesondk.herdr remotes "hal"
 ```
 
 Each remote section shows a status dot (red + "unreachable" when down), an
@@ -139,18 +155,18 @@ status line (`herdr pane read`, e.g. `ctx 46.4k/800k`).
   `herdr agent prompt` so they run in the herdr server.
 - **"Herdr server is not running" while herdr runs:** that line is the widget's
   initial state — it means the poll didn't run, not that herdr is down. Check
-  the shell log for `jesper.herdr failed` / QML errors
+  the shell log for `io.github.jeesondk.herdr failed` / QML errors
   (`journalctl -b | grep omarchy-shell`).
 - **QML errors after pulling updates:** `omarchy plugin validate
-  ~/.config/omarchy/plugins/jesper.herdr` and `omarchy restart shell`.
+  ~/.config/omarchy/plugins/io.github.jeesondk.herdr` and `omarchy restart shell`.
 
 ## Notes
 
-- Unofficial community plugin; not affiliated with Herdr. The logo asset is
-  Herdr's brand mark from herdr.dev.
+- Unofficial community plugin; not affiliated with Herdr. The icon is the
+  plugin's own (`assets/icon.svg`).
 - The plugin runs unsandboxed inside omarchy-shell; review the code before
   installing (as `omarchy plugin add` itself warns).
 
 ## License
 
-MIT (see LICENSE). The Herdr logo remains property of its respective owner.
+MIT (see LICENSE).
