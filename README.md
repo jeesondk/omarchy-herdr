@@ -56,8 +56,9 @@ that folder and its own bar settings. Machines saved with **Add remote** are
 herdr's own records and stay in `herdr machine list`; remove them from the
 panel first, or with `herdr machine remove <id>`.
 
-If you installed the optional `contrib/herdr-vibe-bridge`, remove it with the
-commands in its README.
+The optional vibe bridge now lives in its own repo,
+[herdr-vibe-bridge](https://github.com/jeesondk/herdr-vibe-bridge); if you
+installed it, remove it with the commands in its README.
 
 ## Settings
 
