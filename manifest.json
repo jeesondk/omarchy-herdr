@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.jeesondk.herdr",
   "name": "Herdr Control",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "jesper",
   "license": "MIT",
   "description": "Live Herdr session state in the bar: workspaces, tabs, panes, and the agent running in each pane.",
